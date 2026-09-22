@@ -1,10 +1,11 @@
 // Player-controlled flight for the stationary Waterfall course.
 // Route geometry supplies only the starting point; it never supplies movement or attitude.
 import {Euler, Quaternion, Vector3} from './vendor/three.module.js';
-import {clamp, damp, getSpeedMultiplier, PHYSICS_STEP, wingCommand} from './flight.js';
-import {routeAt} from './waterfall-core.js?v=6';
+import {damp, PHYSICS_STEP, wingCommand} from './flight.js';
+import {routeAt, ARC_RADIUS, WATERFALL_CRUISE_SPEED, getSpeedMultiplier} from './waterfall-core.js';
+import {limitWaterfallMovement} from './waterfall-bumper.js?v=1';
 
-export const WATERFALL_TURN_RADIUS = 96;
+export const WATERFALL_TURN_RADIUS = ARC_RADIUS;
 export const WATERFALL_RING_RADIUS = 13.5;
 const CAMERA_OFFSET = new Vector3(0, 6.4, 40);
 const CAMERA_TARGET = new Vector3(0, 1.5, -35);
@@ -15,13 +16,15 @@ const LOCAL_FORWARD = new Vector3(0, 0, -1);
 // orientation is authoritative. pitch/yaw are compatibility values, not steering state.
 export function initializeWaterfallFlight(f) {
   const start = routeAt(0);
+  const speedMultiplier=getSpeedMultiplier(),speed=WATERFALL_CRUISE_SPEED*speedMultiplier;
   Object.assign(f, {
     x: start.x, alt: start.y, z: start.z, distance: 0,
     orientation: new Quaternion(),
     previousPosition: {x: start.x, y: start.y, z: start.z},
     pitch: 0, yaw: 0, roll: 0, pitchRate: 0, yawRate: 0,
-    vx: 0, vy: 0, vz: -f.speed, elapsed: 0,
+    speed, speedMultiplier, vx: 0, vy: 0, vz: -speed, elapsed: 0,
     diveHold: 0, noseDive: false,
+    bumperActive: false,
   });
   return f;
 }
@@ -35,14 +38,15 @@ export function stepWaterfallFlight(f, left, right, dt) {
   if (!Number.isFinite(dt) || dt <= 0) return f;
   const command = wingCommand(left, right);
   f.previousPosition = {x: f.x, y: f.alt, z: f.z};
+  f.bumperActive=false;
   const count = Math.max(1, Math.ceil(dt / PHYSICS_STEP));
   const step = dt / count;
   const axis = new Vector3(), halfTurn = new Quaternion(), fullTurn = new Quaternion();
   const middle = new Quaternion(), forward = new Vector3();
   for (let i = 0; i < count; i++) {
-    // Keep the regular speed setting and its gradual speed response. Direction is manual.
-    const cruise = clamp(37 + f.elapsed * .055 - command.pitch * 14, 22, 69) * getSpeedMultiplier();
-    f.speed = damp(f.speed, cruise, .65, step);
+    // A new flight snapshots its speed so fixed rings retain their promised timing.
+    // Pitch and elapsed time cannot create an unannounced acceleration on the drop.
+    f.speed = WATERFALL_CRUISE_SPEED*f.speedMultiplier;
     f.pitchRate = command.pitch * f.speed / WATERFALL_TURN_RADIUS;
     f.yawRate = command.bank * f.speed / WATERFALL_TURN_RADIUS;
     axis.set(f.pitchRate, f.yawRate, 0);
@@ -57,10 +61,12 @@ export function stepWaterfallFlight(f, left, right, dt) {
     }
     // Midpoint direction keeps turns smooth and makes path length independent of heading.
     forward.copy(LOCAL_FORWARD).applyQuaternion(middle);
-    f.x += forward.x * f.speed * step;
-    f.alt += forward.y * f.speed * step;
-    f.z += forward.z * f.speed * step;
-    f.distance += f.speed * step;
+    const previous={x:f.x,y:f.alt,z:f.z};
+    const proposed={x:f.x+forward.x*f.speed*step,y:f.alt+forward.y*f.speed*step,z:f.z+forward.z*f.speed*step};
+    const next=limitWaterfallMovement(previous,proposed,f.surfaceHeight);
+    f.x=next.x;f.alt=next.y;f.z=next.z;
+    f.bumperActive ||= next.active;
+    f.distance += next.active?Math.hypot(f.x-previous.x,f.alt-previous.y,f.z-previous.z):f.speed*step;
     f.elapsed += step;
     f.invulnerable = Math.max(0, (f.invulnerable || 0) - step);
     f.roll = damp(f.roll, command.bank * .97, 16, step);

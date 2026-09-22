@@ -1,15 +1,16 @@
 // Emerald Falls: finite, stationary scenery for the manually flown two-thumb course.
 // Textures are CC0 photographs. World-space sampling keeps steep cliffs crisp.
 import * as THREE from './vendor/three.module.js';
-import {routeAt, FALL_START, FALL_END} from './waterfall-core.js?v=6';
+import {routeAt, FALL_START, FALL_END, ROUTE_LENGTH} from './waterfall-core.js';
 
 const clamp = THREE.MathUtils.clamp;
 const smooth = (a,b,x) => {const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
 const hash = (x,z=0) => {const v=Math.sin(x*127.1+z*311.7)*43758.5453;return v-Math.floor(v);};
 function noise(x,z){const ix=Math.floor(x),iz=Math.floor(z),u=smooth(0,1,x-ix),v=smooth(0,1,z-iz);return THREE.MathUtils.lerp(THREE.MathUtils.lerp(hash(ix,iz),hash(ix+1,iz),u),THREE.MathUtils.lerp(hash(ix,iz+1),hash(ix+1,iz+1),u),v);}
-const uphill = Array.from({length:501},(_,i)=>routeAt(i*5));
+const uphill = Array.from({length:Math.ceil(FALL_START/5)+1},(_,i)=>routeAt(Math.min(FALL_START,i*5)));
 const lip=routeAt(FALL_START),exit=routeAt(FALL_END);
-export const WATERFALL_RIVER_CLEARANCE=60;
+const WORLD_END_Z=routeAt(ROUTE_LENGTH).z-400;
+export const WATERFALL_RIVER_CLEARANCE=120;
 export function valleyProfile(z){
  if(z>=0)return {x:0,y:42-WATERFALL_RIVER_CLEARANCE};
  if(z<lip.z){return {x:0,y:THREE.MathUtils.lerp(lip.y-WATERFALL_RIVER_CLEARANCE,exit.y-WATERFALL_RIVER_CLEARANCE,smooth(-lip.z+8,-lip.z+42,-z))};}
@@ -18,7 +19,7 @@ export function valleyProfile(z){
  const a=uphill[lo],b=uphill[hi],t=clamp((z-a.z)/(b.z-a.z),0,1);
  return {x:THREE.MathUtils.lerp(a.x,b.x,t),y:THREE.MathUtils.lerp(a.y,b.y,t)-WATERFALL_RIVER_CLEARANCE};
 }
-export function riverWidth(z){return 64+35*Math.exp(-(((z+3140)/160)**2))+7*Math.sin(z*.004)**2;}
+export function riverWidth(z){return 64+35*Math.exp(-(((z-exit.z)/240)**2))+7*Math.sin(z*.004)**2;}
 export function waterfallGroundHeight(x,z){
  const p=valleyProfile(z),a=Math.abs(x-p.x),w=riverWidth(z);
  if(a<w)return p.y-8+3*noise(x*.04,z*.04);
@@ -41,7 +42,7 @@ const triGLSL=`
  }`;
 
 export function createWaterfallEnvironment({group,renderer}){
- const pending=[],textures=[],materials=[],geometries=[];
+ const pending=[],textures=[],materials=[],geometries=[],surfaces=[];
  const loader=new THREE.TextureLoader();
  const tex=(name,color=false)=>{
   let resolve,reject;pending.push(new Promise((a,b)=>{resolve=a;reject=b;}));
@@ -72,12 +73,13 @@ export function createWaterfallEnvironment({group,renderer}){
  function mesh(geo,mat,name){geometries.push(geo);const m=new THREE.Mesh(geo,mat);m.name=name;group.add(m);return m;}
  // Stable chunks exist at creation; no scenery is ever recycled or player-relative.
  const columns=Array.from({length:97},(_,i)=>{const s=(i-48)/48;return Math.sign(s)*Math.pow(Math.abs(s),1.6)*1550;});
- for(let chunk=0;chunk<24;chunk++){
+ for(let chunk=0;chunk<Math.ceil((400-WORLD_END_Z)/260);chunk++){
   const start=400-chunk*260,nz=26,nx=columns.length-1,positions=[],indices=[],uv=[];
   for(let j=0;j<=nz;j++){const z=start-j*10,p=valleyProfile(z);for(const dx of columns){const x=p.x+dx;positions.push(x,waterfallGroundHeight(x,z),z);uv.push(x/18,z/18);}}
   for(let j=0;j<nz;j++)for(let i=0;i<nx;i++){const a=j*(nx+1)+i,b=a+1,c=a+nx+1,d=c+1;indices.push(a,b,c,b,d,c);}
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geo.setIndex(indices);geo.computeVertexNormals();
   mesh(geo,terrainMaterial,'valley-rock-and-meadow-'+chunk);
+  surfaces.push({positions:geo.attributes.position,columns:nx+1,rows:nz,start,end:start-nz*10});
  }
  const waterNormal=tex('water_normal_512.png');waterNormal.repeat.set(16,160);
  const fallNoise=tex('noise_512.png');
@@ -95,11 +97,12 @@ export function createWaterfallEnvironment({group,renderer}){
   `);
  };riverMat.customProgramCacheKey=()=> 'emerald-river-v1';
  // A continuous winding river rises with the upper valley and continues below the falls.
- for(const [start,end] of [[400,lip.z-24],[lip.z-43,-5900]]){
+ for(const [start,end] of [[400,lip.z-24],[lip.z-43,WORLD_END_Z]]){
   const n=Math.ceil((start-end)/9),pos=[],uv=[],indices=[];
   for(let j=0;j<=n;j++){const z=THREE.MathUtils.lerp(start,end,j/n),p=valleyProfile(z),w=riverWidth(z);if(start===400&&z<lip.z)p.y=lip.y-WATERFALL_RIVER_CLEARANCE;for(const side of [-1,1]){pos.push(p.x+side*w,p.y,z);uv.push((side+1)/2,j/n);}}
   for(let j=0;j<n;j++){const a=j*2;indices.push(a,a+1,a+2,a+1,a+3,a+2);}
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geo.setIndex(indices);geo.computeVertexNormals();mesh(geo,riverMat,'stationary-river');
+  surfaces.push({positions:geo.attributes.position,columns:2,rows:n,start,end});
  }
  // Fixed waterfall ribbons, with bright streaks and gaps exposing the rock wall.
  const fallMat=new THREE.ShaderMaterial({side:THREE.DoubleSide,transparent:true,depthWrite:false,uniforms:{uNoise:{value:fallNoise}},vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',fragmentShader:`varying vec2 vUv;uniform sampler2D uNoise;void main(){float broad=texture2D(uNoise,vec2(vUv.x*1.8,vUv.y*.5)).r;float fine=texture2D(uNoise,vec2(vUv.x*15.+broad*.4,vUv.y*3.5)).r;float n=clamp(broad*.55+fine*.65,0.,1.);float edge=smoothstep(0.,.08,vUv.x)*smoothstep(0.,.08,1.-vUv.x);vec3 c=mix(vec3(.21,.52,.53),vec3(.95,1.,.98),smoothstep(.25,.78,n));gl_FragColor=vec4(c,edge*(.55+n*.4));\n#include <tonemapping_fragment>\n#include <colorspace_fragment>}`});materials.push(fallMat);
@@ -111,10 +114,10 @@ export function createWaterfallEnvironment({group,renderer}){
  // Forest rendered in batches, keeping the route clear and phone draw calls low.
  const batches=Array.from({length:20},()=>[]),dummy=new THREE.Object3D();let treeCount=0;
  for(let i=0;i<850;i++){
-  const z=300-hash(i,33)*6050,p=valleyProfile(z),side=i%2?1:-1,x=p.x+side*(90+hash(i,14)*720),y=waterfallGroundHeight(x,z);
+  const z=300-hash(i,33)*(300-WORLD_END_Z),p=valleyProfile(z),side=i%2?1:-1,x=p.x+side*(115+hash(i,14)*720),y=waterfallGroundHeight(x,z);
   if(z<lip.z+35&&z>lip.z-70)continue;
   const slope=Math.abs(waterfallGroundHeight(x+3,z)-y)+Math.abs(waterfallGroundHeight(x,z+3)-y);if(slope>10)continue;
-  const size=8+hash(i,8)*15;batches[Math.min(19,Math.floor((300-z)/303))].push({x,y,z,size,seed:i});treeCount++;
+  const size=8+hash(i,8)*15;batches[Math.min(19,Math.floor((300-z)/(300-WORLD_END_Z)*20))].push({x,y,z,size,seed:i});treeCount++;
  }
  const bark=new THREE.MeshStandardMaterial({color:0x625d4c,roughness:1});
  const twigColor=tex('waterfall/fir_tree_01_twig_diff_2k.jpg',true),twigAlpha=tex('waterfall/fir_tree_01_twig_alpha_2k.png');
@@ -146,7 +149,23 @@ export function createWaterfallEnvironment({group,renderer}){
  // Attach an error handler now; start() still awaits the rejecting promise.
  ready.catch(e=>{group.userData.assetError=String(e?.message||e);});
  group.userData={...group.userData,forestTrees:treeCount,textureSize:2048,stationary:true};
- return {ready,terrainMaterial,textures,update(){},dispose(){for(const g of geometries)g.dispose();for(const m of materials)m.dispose();for(const t of textures)t.dispose();group.clear();}};
+ // Use the actual rendered triangles. The highest corner of every intersecting
+ // cell bounds both triangles from above, including steep banks and river joins.
+ function surfaceHeight(x,z,radius=24){
+  let top=-Infinity;
+  for(const s of surfaces){
+   if(z-radius>s.start||z+radius<s.end)continue;
+   const dz=(s.start-s.end)/s.rows,p=s.positions,n=s.columns;
+   const first=Math.max(0,Math.floor((s.start-z-radius)/dz)),last=Math.min(s.rows-1,Math.floor((s.start-z+radius)/dz));
+   for(let j=first;j<=last;j++)for(let i=0;i<n-1;i++){
+    const a=j*n+i,b=a+1,c=a+n,d=c+1;
+    if(Math.max(p.getX(b),p.getX(d))<x-radius||Math.min(p.getX(a),p.getX(c))>x+radius)continue;
+    top=Math.max(top,p.getY(a),p.getY(b),p.getY(c),p.getY(d));
+   }
+  }
+  return top;
+ }
+ return {ready,terrainMaterial,textures,surfaceHeight,update(){},dispose(){for(const g of geometries)g.dispose();for(const m of materials)m.dispose();for(const t of textures)t.dispose();group.clear();}};
 }
 
 export function createWaterfallSky({scene,renderer}){

@@ -9,8 +9,8 @@ import * as THREE from 'three';
 import {TIER, setTier, readTierSetting} from './quality.js';
 import {createRenderSystem} from './render.js';
 import {createSky} from './sky.js';
-import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=1';
-import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=1';
+import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=2';
+import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=2';
 import {createTerrain, terrainHeight, createArchGeometry, createBoulderGeometry, createRockMaterial, worldSlope} from './terrain.js';
 import {createWater} from './water.js';
 import {createDressing} from './dressing.js';
@@ -29,8 +29,8 @@ import {createTilt} from './tilt.js';
 import {createAudio} from './audio.js';
 import {createSpeech, readFireWord, saveFireWord, STICKY_STATUSES} from './speech.js';
 import {createNoiseFire} from './noise-fire.js?v=1';
-import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, createRings as createWaterfallRings} from './waterfall-core.js?v=6';
-import {initializeWaterfallFlight,stepWaterfallFlight,waterfallCameraPose,crossesWaterfallRing} from './waterfall-flight.js?v=2';
+import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, createRings as createWaterfallRings, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
+import {initializeWaterfallFlight,stepWaterfallFlight,waterfallCameraPose,crossesWaterfallRing} from './waterfall-flight.js?v=3';
 import {createFireballs} from './fireball.js';
 import {createNet} from './net.js';
 
@@ -38,7 +38,7 @@ const $ = id => document.getElementById(id);
 const TAU = Math.PI * 2;
 const query = new URLSearchParams(location.search);
 const WATERFALL_MAP = location.pathname.includes('/waterfall/');
-const WATERFALL_RINGS = WATERFALL_MAP ? createWaterfallRings() : [];
+let WATERFALL_RINGS = WATERFALL_MAP ? createWaterfallRings() : [];
 const debug = query.get('debug') === '1';
 const showStats = query.get('stats') === '1';
 
@@ -174,7 +174,7 @@ function setGate(g, n) {
  g.group.position.set(g.x, g.alt - g.d * worldSlope, -g.d);
  g.group.rotation.set(0, 0, 0);
 }
-for (let i = 0; i < (WATERFALL_MAP ? WATERFALL_RINGS.length : 10); i++) {
+function addGate(i) {
  const group = new THREE.Group();
  group.add(new THREE.Mesh(gateGeo, gateMaterial), new THREE.Mesh(haloGeo, haloMaterial));
  for (let j = 0; j < 4; j++) {
@@ -187,6 +187,15 @@ for (let i = 0; i < (WATERFALL_MAP ? WATERFALL_RINGS.length : 10); i++) {
  const gate = {group};
  setGate(gate, i);
  gates.push(gate);
+}
+for (let i = 0; i < (WATERFALL_MAP ? WATERFALL_RINGS.length : 10); i++) addGate(i);
+function resetWaterfallCourse(){
+ WATERFALL_RINGS=createWaterfallRings(getWaterfallSpeed());
+ // Reuse meshes; only a new flight may change the physical checkpoint layout.
+ while(gates.length>WATERFALL_RINGS.length){const g=gates.pop();scene.remove(g.group);g.group.traverse(o=>{if(o.geometry&&o.geometry!==gateGeo&&o.geometry!==haloGeo)o.geometry.dispose();});}
+ while(gates.length<WATERFALL_RINGS.length)addGate(gates.length);
+ gates.forEach((g,i)=>setGate(g,i));
+ waterfallGuide.reset();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -387,6 +396,7 @@ async function start() {
  resetInputs();
  flapPhase = 0;
  flight = freshFlight();
+ if (WATERFALL_MAP) {flight.surfaceHeight=waterfallEnvironment.surfaceHeight;resetWaterfallCourse();}
  if (!WATERFALL_MAP) { terrain.reset(); dressing.reset(); }
  gates.forEach((g, i) => setGate(g, i));
  obstacles.forEach((o, i) => setObstacle(o, i));
@@ -518,8 +528,9 @@ function syncSettings() {
  $('graphics-description').textContent = 'Auto picks Phone on handhelds. Now running: ' + (tier === 'high' ? 'High (film)' : 'Phone (fast)') + '. Changing it restarts the game.';
  $('camera-mode').value = cameraMode;
  $('dragon-style').value = dragonStyle;
- $('speed-slider').value = String(getSpeedMultiplier());
- $('speed-value').value = getSpeedMultiplier().toFixed(2) + 'x';
+ const selectedSpeed=WATERFALL_MAP?getWaterfallSpeed():getSpeedMultiplier();
+ $('speed-slider').value = String(selectedSpeed);
+ $('speed-value').value = selectedSpeed.toFixed(2) + 'x';
  $('fire-word').value = readFireWord();
  $('voice-fire').checked = voiceFireEnabled;
  $('noise-fire').checked = noiseFireEnabled;
@@ -635,7 +646,7 @@ function readSoundScene() {
 function updateAudio() {
  if (!audio.enabled) return;
  readSoundScene();
- audio.update({speed: flight.speed / getSpeedMultiplier(), alt: flight.alt, falls: soundScene.falls, cloud: soundScene.cloud, playing: mode === 'playing'});
+ audio.update({speed: flight.speed / (WATERFALL_MAP ? flight.speedMultiplier : getSpeedMultiplier()), alt: flight.alt, falls: soundScene.falls, cloud: soundScene.cloud, playing: mode === 'playing'});
 }
 // The full-screen flash: red for a hit, orange for a fireball leaving the mouth.
 let flashTimer = 0;
@@ -778,7 +789,7 @@ function startNoise() {
  noiseFire.start();
 }
 $('speed-slider').addEventListener('input', () => {
- const v = setSpeedMultiplier($('speed-slider').value);   // live: flight.js reads the multiplier every physics step
+ const v = WATERFALL_MAP ? setWaterfallSpeed($('speed-slider').value) : setSpeedMultiplier($('speed-slider').value);
  $('speed-value').value = v.toFixed(2) + 'x';
 });
 // 'Test the microphone': starts listening right from the tap (so the browser's microphone prompt is allowed to show)
@@ -1144,7 +1155,7 @@ function animateDragon(dt, l, r) {
  dragon.position.set(p.x,p.y,p.z);
  if (WATERFALL_MAP) { dragon.quaternion.copy(flight.orientation);dragon.rotateZ(flight.roll); }
  else dragon.rotation.set(flight.pitch, flight.yaw, flight.roll, 'YXZ');
- const pose = wingbeatPose(flapPhase, (l + r) * 0.5, flight.speed / getSpeedMultiplier());
+ const pose = wingbeatPose(flapPhase, (l + r) * 0.5, flight.speed / (WATERFALL_MAP ? flight.speedMultiplier : getSpeedMultiplier()));
  const prevPhase = ((flapPhase % TAU) + TAU) % TAU;
  flapPhase += dt * Math.PI * 2 * pose.frequency;
  // The start of the power stroke (phase wrapped) is the wingbeat thump the rider feels.
@@ -1181,7 +1192,7 @@ function updateWorld(dt) {
    if(mode==='playing'&&!g.caught&&crossesWaterfallRing(flight.previousPosition,current,g.ring)){
     g.caught=true;g.passed=true;flight.gates++;audio.gate();toast('GATE CAUGHT +1');
    }
-   g.group.visible=!g.caught&&g.n>=next-1&&g.n<=next+4&&Math.hypot(g.group.position.x-current.x,g.group.position.y-current.y,g.group.position.z-current.z)<VISIBLE_RANGE;
+   g.group.visible=!g.caught&&g.n>=next&&g.n<=next+1&&Math.hypot(g.group.position.x-current.x,g.group.position.y-current.y,g.group.position.z-current.z)<VISIBLE_RANGE;
   }
   // No route-driven transforms, recycling, spin or pulsing in this finite map.
   return;

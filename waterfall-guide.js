@@ -75,7 +75,11 @@ export function createWaterfallGuide({container,camera,gates}) {
   if(disposed)return null;
   if(!doc.body.classList.contains('playing')){root.style.display='none';return null;}
   const target=selectWaterfallTarget(gates,flight,previousIndex);
-  if(!target){root.style.display='none';previousIndex=null;return null;}
+  if(!target){
+   previousIndex=null;root.dataset.ring='';root.style.display=flight.bumperActive?'block':'none';
+   marker.style.left='50%';marker.style.top='65%';icon.textContent='↑';icon.style.transform='none';label.textContent='Surface protection · steer up';
+   return null;
+  }
   previousIndex=target.index;
   world.set(target.center.x,target.center.y,target.center.z);
   camera.updateMatrixWorld();view.copy(world).applyMatrix4(camera.matrixWorldInverse);
@@ -84,7 +88,7 @@ export function createWaterfallGuide({container,camera,gates}) {
   root.style.display='block';marker.style.left=`${position.x}px`;marker.style.top=`${position.y}px`;
   icon.textContent=position.offscreen?'\u2191':'\u25c7';
   icon.style.transform=position.offscreen?`rotate(${position.angle}deg)`:'none';
-  label.textContent=`${Math.round(target.distance)} m \u00b7 ${target.cue}`;
+  label.textContent=flight.bumperActive?'Surface protection · steer up':`${Math.round(target.distance)} m \u00b7 ${target.cue}`;
   root.dataset.ring=String(target.index);root.dataset.offscreen=String(position.offscreen);
   return target;
  }
