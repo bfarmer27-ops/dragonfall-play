@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script></head>
+<body style="margin:0;background:#000"><canvas id="c" width="1280" height="720"></canvas><pre id="out" style="position:fixed;top:0;left:0;color:#8f8;font:12px monospace;margin:4px"></pre>
+<script type="module">
+// Preview a downloaded dragon model: ?file=../../models/<name>/model.glb  (served by a second static server rooted at D:/AgentWork/dragonfall)
+// &view=side|rider|front  &anim=<index>  &scale=<n>
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {RGBELoader} from 'three/addons/loaders/RGBELoader.js';
+const q=new URLSearchParams(location.search);const file=q.get('file');const view=q.get('view')||'side';
+const r=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:true});r.toneMapping=THREE.ACESFilmicToneMapping;r.toneMappingExposure=.9;r.outputColorSpace=THREE.SRGBColorSpace;
+const s=new THREE.Scene();s.background=new THREE.Color(0x3a4a5a);
+const cam=new THREE.PerspectiveCamera(50,16/9,.05,2000);
+const sun=new THREE.DirectionalLight(0xffd7a8,3);sun.position.set(-2,4,-6);s.add(sun);s.add(new THREE.HemisphereLight(0x8fa8c0,0x2a2118,.8));
+new RGBELoader().load('../assets/kiara_8_sunset_1k.hdr',t=>{t.mapping=THREE.EquirectangularReflectionMapping;s.environment=t;});
+const out=document.getElementById('out');let mixer=null,info='';
+new GLTFLoader().load(file,g=>{
+ const root=g.scene;s.add(root);
+ const box=new THREE.Box3().setFromObject(root),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
+ const scale=(+q.get('scale'))||(10/Math.max(size.x,size.y,size.z));root.scale.setScalar(scale);root.position.sub(center.multiplyScalar(scale));
+ let tris=0,mats=new Set();root.traverse(o=>{if(o.isMesh){tris+=(o.geometry.index?o.geometry.index.count:o.geometry.attributes.position.count)/3;mats.add(o.material);}});
+ const anims=g.animations.map(a=>a.name+'('+a.duration.toFixed(1)+'s)');
+ if(g.animations.length){mixer=new THREE.AnimationMixer(root);mixer.clipAction(g.animations[+(q.get('anim')||0)]||g.animations[0]).play();}
+ const b2=new THREE.Box3().setFromObject(root),sz=b2.getSize(new THREE.Vector3());
+ if(view==='rider'){cam.position.set(0,sz.y*.55,sz.z*.15);cam.lookAt(0,sz.y*.35,-sz.z*.6);}
+ else if(view==='front'){cam.position.set(0,sz.y*.4,-sz.z*1.2);cam.lookAt(0,sz.y*.3,0);}
+ else {cam.position.set(sz.x*1.1,sz.y*.6,sz.z*.9);cam.lookAt(0,sz.y*.3,0);}
+ info=`file=${file} tris=${Math.round(tris)} materials=${mats.size} size(m after scale)=${sz.x.toFixed(1)}x${sz.y.toFixed(1)}x${sz.z.toFixed(1)} anims=${anims.join(',')||'NONE'}`;
+ window.__model={tris:Math.round(tris),anims,ok:true};
+},undefined,e=>{info='LOAD FAIL '+e;window.__model={ok:false,error:String(e)};});
+const clock=new THREE.Clock();let frames=0;const tmpBox=new THREE.Box3(),tmpSize=new THREE.Vector3(),tmpCenter=new THREE.Vector3();
+// Every frame: measure the ANIMATED mesh (precise box handles skinned meshes) and keep the camera aimed at it.
+function frameCamera(){const root=s.children.find(o=>o.type==='Group'||o.type==='Object3D');if(!root)return;tmpBox.setFromObject(root,true);if(tmpBox.isEmpty())return;tmpBox.getSize(tmpSize);tmpBox.getCenter(tmpCenter);const d=Math.max(tmpSize.x,tmpSize.y,tmpSize.z);
+ if(view==='rider'){cam.position.set(tmpCenter.x,tmpCenter.y+tmpSize.y*.35,tmpCenter.z+tmpSize.z*.05);cam.lookAt(tmpCenter.x,tmpCenter.y+tmpSize.y*.15,tmpCenter.z-d);}
+ else if(view==='front'){cam.position.set(tmpCenter.x,tmpCenter.y+d*.25,tmpCenter.z-d*1.3);cam.lookAt(tmpCenter);}
+ else{cam.position.set(tmpCenter.x+d*1.1,tmpCenter.y+d*.45,tmpCenter.z+d*.9);cam.lookAt(tmpCenter);}}
+function tick(){const dt=clock.getDelta();if(mixer)mixer.update(dt);frameCamera();r.render(s,cam);frames++;window.__frames=frames;out.textContent=info+' frames='+frames;requestAnimationFrame(tick);}tick();
+</script></body></html>

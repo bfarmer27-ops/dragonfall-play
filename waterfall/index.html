@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <base href="../">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07171b"><meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="description" content="Dragonfall Waterfall Map: a large two-thumb flight route with a rising circle and 90-degree waterfall descent.">
+  <link rel="icon" href="data:,">
+  <title>Dragonfall — Waterfall Map · Two Thumb</title>
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/","./flight.js":"./flight.js?v=15","./dragon-norberto.js":"./dragon-norberto.js?v=3","./net.js":"./net.js?v=12","./render.js":"./render.js?v=11","./terrain.js":"./terrain.js?v=11","./sky.js":"./sky.js?v=11"}}</script>
+  <link rel="stylesheet" href="./style.css?v=10">
+</head>
+<body>
+ <main id="game">
+  <canvas id="sky" aria-label="3D dragon flying through a mountain canyon"></canvas>
+  <header class="hud">
+   <div class="wordmark"><span class="sigil">↟</span><span>DRAGONFALL<small>ENDLESS FLIGHT</small></span></div>
+   <div id="distance" class="distance"><span id="meters">0</span><small>METERS FLOWN</small></div>
+   <div class="actions">
+    <button id="settings" class="icon-button" aria-label="Open settings" title="Settings"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg></button>
+    <button id="sound" class="icon-button" aria-label="Enable sound" title="Sound"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path id="sound-waves" d="m16 9 6 6m0-6-6 6"/></svg></button>
+    <button id="fullscreen" class="icon-button" aria-label="Enter fullscreen" title="Fullscreen"><svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button>
+    <button id="pause" class="icon-button" aria-label="Pause flight" title="Pause"><svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg></button>
+   </div>
+  </header>
+  <div id="flight-hud" class="flight-hud">
+   <div class="health" aria-label="Three shields remaining"><i></i><i></i><i></i></div>
+   <div class="scores"><div class="gate-score"><b id="gates">0</b><span>GATES</span></div><div class="gate-score"><b id="kills">0</b><span>KILLS</span></div></div>
+  </div>
+  <!-- Multiplayer scoreboard: "name: kills" for every rider in the room; hidden while offline. -->
+  <div id="scoreboard" class="scoreboard" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="wing-controls" class="wing-controls">
+   <div class="wing-pad left" id="left-wing" aria-label="Left wing: drag up or down"><div class="track"><span>⌃</span><i></i><span>⌄</span></div><div class="thumb"><span></span></div><small>LEFT WING</small></div>
+   <div class="wing-pad right" id="right-wing" aria-label="Right wing: drag up or down"><div class="track"><span>⌃</span><i></i><span>⌄</span></div><div class="thumb"><span></span></div><small>RIGHT WING</small></div>
+  </div>
+  <!-- FIRE: thumb-sized button at the bottom centre, visible only while flying (same as the F key and the voice word). -->
+  <button id="fire" class="fire-button" aria-label="Breathe fire" type="button">FIRE</button>
+  <p id="voice-hud" class="voice-hud" aria-live="polite"></p>
+  <p id="mic-state" class="mic-state"></p>
+  <div class="telemetry" id="telemetry"><span><b id="speed">0</b> <small>KM/H</small></span><span class="horizon-line"></span><span><b id="altitude">0</b> <small>M ALTITUDE</small></span></div>
+  <section id="intro" class="intro">
+   <div class="intro-title"><p>THE LONG DESCENT</p><h1>DRAGONFALL</h1><div class="title-line"></div><p class="subtitle">Take the wings. Find your flow.</p></div>
+   <div class="launch-panel">
+    <div class="instructions"><div><b id="climb-gesture">↓ ↓</b><span>CLIMB</span></div><div><b id="dive-gesture">↑ ↑</b><span>DIVE</span></div><div><b id="bank-left-gesture">↓ ↑</b><span>BANK LEFT</span></div><div><b id="bank-right-gesture">↑ ↓</b><span>BANK RIGHT</span></div></div>
+    <button id="start" class="primary-button">TAKE FLIGHT <span>↗</span></button>
+    <p class="mobile-hint">Slide each thumb to steer. Rotate your phone for landscape.</p><p class="desktop-hint">W / S · left wing &nbsp;&nbsp; I / K · right wing &nbsp;&nbsp; or use arrow keys to steer &nbsp;&nbsp; F · fire</p>
+    <span class="best-intro">PERSONAL BEST <b id="intro-best">0 m</b></span>
+   </div>
+  </section>
+  <section id="modal" class="modal" hidden>
+   <div class="modal-inner"><p class="eyebrow" id="modal-eyebrow">TAKE A BREATH</p><h2 id="modal-title">Flight paused</h2><p id="modal-message">The canyon will wait.</p><div id="run-stats" hidden><div><b id="final-distance">0</b><span>METERS FLOWN</span></div><div><b id="final-gates">0</b><span>GATES CAUGHT</span></div><div><b id="final-kills">0</b><span>KILLS</span></div></div><button id="resume" class="primary-button">RESUME FLIGHT <span>↗</span></button><button id="restart" class="text-button">Start a new flight</button></div>
+  </section>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+   <form method="dialog"><div class="settings-heading"><h2 id="settings-title">Settings</h2><button class="icon-button" aria-label="Close settings" value="close">✕</button></div>
+   <label class="setting-row" for="control-mode"><strong>Flight controls</strong><select id="control-mode"><option value="thumbs">Two thumbs</option><option value="tilt">Phone tilt</option></select></label>
+   <div id="tilt-options"><p id="tilt-status" role="status">Hold your phone comfortably. Allow motion access when prompted. Your starting position becomes level flight.</p><button id="calibrate-tilt" type="button" class="text-button">Enable / recenter tilt</button></div>
+   <label class="setting-row" for="invert-vertical"><span><strong>Invert up/down</strong><small id="invert-description">Slide both thumbs down to climb, up to dive.</small></span><input id="invert-vertical" type="checkbox" role="switch" checked aria-describedby="invert-description"></label>
+   <!-- Flight speed: 1x = the original build, 2.45x = Ryan's default (1.75 x 1.4). Live for the cruise target. -->
+   <label class="setting-row setting-speed" for="speed-slider"><span><strong>Flight speed</strong><small>1x is the original pace. Up to 10x is available. Applies at once.</small></span><span class="range-wrap"><input id="speed-slider" type="range" min="1" max="10" step="0.05" value="2.45" aria-describedby="speed-value"><output id="speed-value" for="speed-slider">2.45x</output></span></label>
+   <label class="setting-row" for="graphics"><span><strong>Graphics</strong><small id="graphics-description">Auto picks Phone on handhelds. Changing it restarts the game.</small></span><select id="graphics"><option value="auto">Auto</option><option value="high">High (film)</option><option value="phone">Phone (fast)</option></select></label>
+   <label class="setting-row" for="dragon-style"><span><strong>Dragon</strong><small>Dragon flying by NORBERTO-3D. <a href="https://sketchfab.com/3d-models/dragon-flying-78f809b98bbe426e94d4024dc894b206" target="_blank" rel="noopener">Artist and original</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Adapted size and camera view.</small></span><select id="dragon-style" disabled><option value="norberto">NORBERTO flying dragon</option></select></label>
+   <label class="setting-row" for="camera-mode"><span><strong>Camera</strong><small>Rider sits in the saddle; Chase follows from behind.</small></span><select id="camera-mode"><option value="rider">Rider (from the saddle)</option><option value="chase">Chase (behind the dragon)</option></select></label>
+   <!-- Fire breathing: say the fire word (microphone), tap FIRE, or press F. -->
+   <h3 class="settings-section">Fire breathing</h3>
+   <label class="setting-row" for="fire-word"><span><strong>Fire word</strong><small>Say this word to breathe fire. Several words: separate with commas, e.g. dracarys, burn.</small></span><input id="fire-word" class="text-input" type="text" maxlength="24" placeholder="dracarys" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+   <label class="setting-row" for="voice-fire"><span><strong>Voice fire</strong><small>Say the fire word to breathe fire. Uses speech recognition while you fly.</small></span><input id="voice-fire" type="checkbox" role="switch" checked></label>
+   <label class="setting-row" for="noise-fire"><span><strong>Loud-noise fire</strong><small>Any sound above the opening microphone level breathes fire. The base resets when you start.</small></span><input id="noise-fire" type="checkbox" role="switch" checked></label>
+   <button id="voice-test" type="button" class="text-button">Test the microphone</button>
+   <p id="voice-status" class="status-line" role="status">Voice: ready. The FIRE button and the F key always work.</p>
+   <!-- Multiplayer: one player hosts and gets a 4-letter code; friends join with it (or open the share link). -->
+   <h3 class="settings-section">Fly with friends</h3>
+   <label class="setting-row" for="player-name"><span><strong>Your name</strong><small>Shown above your dragon.</small></span><input id="player-name" class="text-input" type="text" maxlength="14" placeholder="Rider" autocomplete="off"></label>
+   <div class="net-row"><button id="host-room" type="button" class="text-button outline">Host a room</button><span class="join-wrap"><input id="room-code" class="text-input code" type="text" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Room code"><button id="join-room" type="button" class="text-button outline">Join</button></span></div>
+   <div id="net-status" class="status-line net-status" role="status">Not connected. Host a room and share the code, or enter a friend's code.</div>
+   <button id="leave-room" type="button" class="text-button" hidden>Leave the room</button>
+   <button class="primary-button" value="done">DONE</button></form>
+  </dialog>
+  <div id="flash" aria-hidden="true"></div>
+  <pre id="stats" class="stats" hidden></pre>
+  <div id="error" class="error" hidden><h2>Your dragon needs WebGL 2</h2><p>Open this game in a current Chrome or Safari browser with hardware acceleration enabled.</p></div>
+ </main>
+ <!-- PeerJS (window.Peer) must load before the game module: net.js reads it when you host or join. -->
+ <script src="./vendor/peerjs.min.js"></script>
+ <script type="module" src="./private-access.js?v=1"></script>
+</body></html>

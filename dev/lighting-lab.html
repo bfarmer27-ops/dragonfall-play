@@ -1,0 +1,215 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Dragonfall lighting lab</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}#out{position:fixed;left:8px;top:8px;color:#9f9;font:12px monospace;white-space:pre;pointer-events:none}</style>
+</head><body><canvas id="c"></canvas><pre id="out"></pre>
+<script type="module">
+// LIGHTING / ATMOSPHERE / POST-PROCESSING proof page for the art-direction plan.
+// It builds a stand-in canyon (same terrainHeight formula as game.js) and proves, under the real vendored
+// three.js r169 add-ons, the exact chain the plan recommends:
+//   HDRI image-based lighting (RGBELoader + PMREMGenerator) + sun DirectionalLight aligned to the HDRI sun
+//   global HEIGHT FOG with sun in-scatter, spliced into THREE.ShaderChunk so every built-in material gets it
+//   visible sky = HDRI above the horizon only, fog colour below (never the HDRI ground)
+//   EffectComposer: RenderPass > GTAOPass > sun-shaft pass > UnrealBloomPass > BokehPass > OutputPass > SMAAPass > film grade pass
+// Query string: ?tier=phone drops GTAO, DOF, SMAA and shafts exactly as quality.js BUDGET.phone demands.
+import * as THREE from 'three';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {GTAOPass} from 'three/addons/postprocessing/GTAOPass.js';
+import {BokehPass} from 'three/addons/postprocessing/BokehPass.js';
+import {SMAAPass} from 'three/addons/postprocessing/SMAAPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {RGBELoader} from 'three/addons/loaders/RGBELoader.js';
+
+const params=new URLSearchParams(location.search);
+const TIER=params.get('tier')==='phone'?'phone':'high';
+const BUDGET={high:{gtao:true,dof:true,smaa:true,shafts:true,shadowMap:2048,tex:'2k'},phone:{gtao:false,dof:false,smaa:false,shafts:false,shadowMap:1024,tex:'1k'}}[TIER];
+const out=document.getElementById('out');const log=s=>{out.textContent+=s+'\n';};
+
+// ---------- 1. Global height fog with sun in-scatter, spliced into every built-in material ----------
+// World position is rebuilt in the vertex shader from the view-space position (transpose of the view rotation
+// is its inverse), so no material needs USE_ENVMAP/worldPosition to be defined.
+const fogUniforms={
+ fogColor:{value:new THREE.Color(0x56697a)},      // shadowed-air colour (cool grey-teal)
+ fogSunColor:{value:new THREE.Color(0xd9a56e)},   // colour of air lit straight by the low sun
+ fogSunDir:{value:new THREE.Vector3(0,0,-1)},
+ fogDensity:{value:0.0030},                        // per-metre extinction at fogHeight
+ fogHeight:{value:0},                              // altitude (m) of densest fog: just above the water
+ fogFalloff:{value:0.06},                         // 1/e thickness ~22 m: fog thins out up the walls
+ fogStart:{value:12},                              // metres of clear air in front of the rider
+};
+const fogGLSL=`
+ uniform vec3 fogSunColor; uniform vec3 fogSunDir; uniform float fogHeight; uniform float fogFalloff; uniform float fogStart;
+ // Analytic height fog (Quilez): integrate exp(-falloff*y) along the ray from camera to point.
+ float heightFogAmount(vec3 camPos,vec3 worldPos,float density,float height,float falloff){
+  vec3 ray=worldPos-camPos; float dist=length(ray); float dy=ray.y;
+  float t=exp(-falloff*(camPos.y-height));
+  float integral=abs(dy)>0.01 ? t*(1.0-exp(-falloff*dy))/(falloff*dy) : t;
+  float d=max(dist-fogStart,0.0);
+  return 1.0-exp(-density*integral*d);
+ }
+ vec3 fogInscatter(vec3 camPos,vec3 worldPos){
+  vec3 v=normalize(worldPos-camPos); float sunAmount=pow(max(dot(v,fogSunDir),0.0),8.0);
+  return mix(fogColor,fogSunColor,sunAmount*0.85);
+ }`;
+THREE.ShaderChunk.fog_pars_vertex='#ifdef USE_FOG\n varying vec3 vFogWorldPos;\n#endif';
+THREE.ShaderChunk.fog_vertex='#ifdef USE_FOG\n vFogWorldPos=cameraPosition+transpose(mat3(viewMatrix))*mvPosition.xyz;\n#endif';
+THREE.ShaderChunk.fog_pars_fragment='#ifdef USE_FOG\n uniform vec3 fogColor; uniform float fogDensity; varying vec3 vFogWorldPos;\n'+fogGLSL+'\n#endif';
+THREE.ShaderChunk.fog_fragment='#ifdef USE_FOG\n { float fogFactor=heightFogAmount(cameraPosition,vFogWorldPos,fogDensity,fogHeight,fogFalloff); gl_FragColor.rgb=mix(gl_FragColor.rgb,fogInscatter(cameraPosition,vFogWorldPos),clamp(fogFactor,0.0,1.0)); }\n#endif';
+// Built-in materials read fogColor/fogDensity from scene.fog; the extra uniforms are patched in via onBeforeCompile hooks below.
+function addFogUniforms(material){const prev=material.onBeforeCompile;material.onBeforeCompile=(shader,renderer)=>{for(const k of ['fogSunColor','fogSunDir','fogHeight','fogFalloff','fogStart'])shader.uniforms[k]=fogUniforms[k];if(prev)prev(shader,renderer);};}
+
+// ---------- 2. Renderer, scene, camera ----------
+const W=innerWidth,H=innerHeight;
+const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:false,powerPreference:'high-performance'});
+renderer.setPixelRatio(1);renderer.setSize(W,H,false);
+renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.78;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene();scene.fog=new THREE.FogExp2(fogUniforms.fogColor.value,fogUniforms.fogDensity.value);
+const camera=new THREE.PerspectiveCamera(63,W/H,.3,2200);
+// Rider view: eye ~2.4 m above the dragon's back, pitched 6 degrees down.
+camera.position.set(0,26,0);camera.lookAt(0,26+Math.tan(3*Math.PI/180)*100,-100);
+
+// ---------- 3. Canyon stand-in (same terrainHeight as game.js, so the walls have the real proportions) ----------
+const hash=(a,b=0)=>{const n=Math.sin(a*127.1+b*311.7)*43758.5453;return n-Math.floor(n);};
+const noise=(x,z)=>{const ix=Math.floor(x),iz=Math.floor(z),fx=x-ix,fz=z-iz,u=fx*fx*(3-2*fx),v=fz*fz*(3-2*fz);return THREE.MathUtils.lerp(THREE.MathUtils.lerp(hash(ix,iz),hash(ix+1,iz),u),THREE.MathUtils.lerp(hash(ix,iz+1),hash(ix+1,iz+1),u),v);};
+const centerAt=d=>28*Math.sin(d*.0027)+15*Math.sin(d*.0061);
+function terrainHeight(x,d){const a=Math.abs(x-centerAt(d)),edge=40+6*Math.sin(d*.014);if(a<edge)return -5;const q=a-edge;const ridge=1-Math.abs(noise(x*.010,d*.009)*2-1);const macro=82+75*ridge+38*noise(x*.024,d*.025);const cliff=(1-Math.exp(-q*.036))*macro;const detail=(noise(x*.16,d*.105)-.5)*5+(noise(x*.06,d*.045)-.5)*17;return 1+cliff+Math.pow(q,.73)*.72+detail*Math.min(1,q/12);}
+const texLoader=new THREE.TextureLoader();
+const suffix=BUDGET.tex;
+function tex(name,srgb){const t=texLoader.load(`../assets/cliff_side_${name}_${suffix}.jpg`);t.wrapS=t.wrapT=THREE.RepeatWrapping;if(srgb)t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());return t;}
+const cliffDiff=tex('diff',true),cliffNor=tex('nor_gl',false),cliffArm=tex('arm',false);
+// Triplanar cliff material: albedo + ARM sampled on world axes (the materials agent will do a proper normal-mapped version).
+const cliffMat=new THREE.MeshStandardMaterial({color:0xffffff,roughness:1,metalness:0,vertexColors:true});
+cliffMat.onBeforeCompile=shader=>{shader.uniforms.uDiff={value:cliffDiff};shader.uniforms.uArm={value:cliffArm};
+ shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vRock;varying vec3 vRockN;').replace('#include <begin_vertex>','#include <begin_vertex>\nvRock=(modelMatrix*vec4(position,1.)).xyz;vRockN=normalize(mat3(modelMatrix)*normal);');
+ shader.fragmentShader=shader.fragmentShader.replace('#include <common>',`#include <common>
+ varying vec3 vRock;varying vec3 vRockN;uniform sampler2D uDiff;uniform sampler2D uArm;
+ vec4 tri(sampler2D s,vec3 p,vec3 n){vec3 w=pow(abs(n),vec3(4.));w/=max(w.x+w.y+w.z,.001);return texture2D(s,p.yz)*w.x+texture2D(s,p.xz)*w.y+texture2D(s,p.xy)*w.z;}`)
+ .replace('#include <color_fragment>',`#include <color_fragment>
+ vec3 nn=normalize(vRockN);vec3 rock=tri(uDiff,vRock*.045,nn).rgb;vec3 fine=tri(uDiff,vRock*.23,nn).rgb;vec3 arm=tri(uArm,vRock*.045,nn).rgb;
+ diffuseColor.rgb*=rock*(.65+fine*.7);float wet=1.-smoothstep(0.,14.,vRock.y);diffuseColor.rgb*=1.-wet*.35;`)
+ .replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nroughnessFactor=mix(.95,.55,arm.g)*(1.-wet*.35);')
+ .replace('#include <aomap_fragment>','#include <aomap_fragment>\nreflectedLight.indirectDiffuse*=mix(1.,arm.r,.8);');};
+addFogUniforms(cliffMat);
+{const nx=144,nz=90,len=900,positions=[],colors=[],indices=[];
+ for(let k=0;k<=nz;k++){const d=-60+k*len/nz;for(let j=0;j<=nx;j++){const axis=j/nx*2-1;const offset=Math.sign(axis)*Math.pow(Math.abs(axis),1.7)*600;const x=centerAt(d)+offset;const y=terrainHeight(x,d);positions.push(x,y-d*.04,-d);const n=noise(x*.03,d*.03);colors.push(.7+n*.25,.75+n*.2,.76+n*.19);}}
+ for(let k=0;k<nz;k++)for(let j=0;j<nx;j++){const a=k*(nx+1)+j,b=a+nx+1;indices.push(a,a+1,b,b,a+1,b+1);}
+ const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));geo.setIndex(indices);geo.computeVertexNormals();
+ const terrain=new THREE.Mesh(geo,cliffMat);terrain.receiveShadow=true;terrain.castShadow=true;scene.add(terrain);}
+// Water: a PBR plane that reflects the PMREM sky. The water agent will replace this; it is here to bounce the sun.
+const waterMat=new THREE.MeshStandardMaterial({color:0x0a2f33,roughness:.12,metalness:0,envMapIntensity:1});addFogUniforms(waterMat);
+{const g=new THREE.PlaneGeometry(500,1100,1,1);g.rotateX(-Math.PI/2);const w=new THREE.Mesh(g,waterMat);w.position.set(0,-5-450*.04*0,-450);w.receiveShadow=true;scene.add(w);}
+// Stand-in dragon neck + head so the depth-of-field and rim light have a subject (dragon agent owns the real one).
+const scales=texLoader.load('../dragon-scales.webp');scales.colorSpace=THREE.SRGBColorSpace;scales.wrapS=scales.wrapT=THREE.RepeatWrapping;scales.repeat.set(3,6);
+const skin=new THREE.MeshStandardMaterial({color:0x3a4a3c,map:scales,bumpMap:scales,bumpScale:.06,roughness:.55,metalness:.05});addFogUniforms(skin);
+{const neck=new THREE.Mesh(new THREE.CapsuleGeometry(1.1,7,8,24),skin);neck.rotation.x=Math.PI/2-.12;neck.position.set(0,23.9,-6.5);neck.castShadow=neck.receiveShadow=true;scene.add(neck);
+ const head=new THREE.Mesh(new THREE.ConeGeometry(1.25,3.6,10),skin);head.rotation.x=-Math.PI/2;head.position.set(0,25.1,-12.2);head.castShadow=true;scene.add(head);
+ for(const s of [-1,1]){const horn=new THREE.Mesh(new THREE.ConeGeometry(.22,1.6,6),new THREE.MeshStandardMaterial({color:0x8e8976,roughness:.5}));horn.position.set(s*.7,25.9,-10.6);horn.rotation.x=-.5;scene.add(horn);
+  // Dark rough saddle-leather blobs at the frame bottom stand in for the rider's hands.
+  const hand=new THREE.Mesh(new THREE.SphereGeometry(.42,12,10),new THREE.MeshStandardMaterial({color:0x3b2a1e,roughness:.6}));hand.position.set(s*1.0,24.55,-2.4);scene.add(hand);}}
+
+// ---------- 4. Lighting: HDRI environment + sun aligned to the HDRI's brightest texel ----------
+scene.add(new THREE.HemisphereLight(0x6f8aa0,0x2a2118,.25)); // small fill so fully shadowed rock is not black under a low sun
+const sun=new THREE.DirectionalLight(0xffd7a8,3.2);sun.castShadow=true;sun.shadow.mapSize.set(BUDGET.shadowMap,BUDGET.shadowMap);
+Object.assign(sun.shadow.camera,{left:-120,right:120,top:120,bottom:-120,near:1,far:600});sun.shadow.bias=-.0004;sun.shadow.normalBias=.06;sun.shadow.camera.updateProjectionMatrix();scene.add(sun,sun.target);
+// Aim the sun ahead-left and just over the rim so shafts and rim light read from the saddle.
+const sunDir=new THREE.Vector3(-.10,.52,-.9).normalize();
+const skyMat=new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,fog:false,uniforms:{uSky:{value:null},uRot:{value:0},fogColor:fogUniforms.fogColor,fogSunColor:fogUniforms.fogSunColor,fogSunDir:fogUniforms.fogSunDir},
+ vertexShader:`varying vec3 vDir;void main(){vDir=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+ fragmentShader:`varying vec3 vDir;uniform sampler2D uSky;uniform float uRot;uniform vec3 fogColor;uniform vec3 fogSunColor;uniform vec3 fogSunDir;
+ #include <common>
+ void main(){vec3 d=normalize(vDir);
+  // Same equirect convention as three's equirectUv, plus a yaw so the HDRI sun sits where the DirectionalLight points from.
+  float c=cos(uRot),s=sin(uRot);vec3 r=vec3(c*d.x-s*d.z,d.y,s*d.x+c*d.z);
+  vec2 uv=vec2(atan(r.z,r.x)*RECIPROCAL_PI2+.5,asin(clamp(r.y,-1.,1.))*RECIPROCAL_PI+.5);
+  vec3 sky=texture2D(uSky,uv).rgb;float sl=dot(sky,vec3(.3,.59,.11));sky=mix(sky,vec3(sl)*vec3(.72,.70,.82),.55)*.6;
+  // Below the horizon the HDRI shows hills: replace them with sun-tinted haze so the ground is never seen.
+  float sunAmount=pow(max(dot(d,fogSunDir),0.),8.);vec3 haze=mix(fogColor,fogSunColor,sunAmount*.85);
+  float horizonBand=smoothstep(-.02,.08,d.y);
+  gl_FragColor=vec4(mix(haze,sky,horizonBand),1.);
+ }`});
+const skyDome=new THREE.Mesh(new THREE.SphereGeometry(1900,48,28),skyMat);scene.add(skyDome);
+// 2.5D cloud ceiling: one big plane at 320 m with 5-octave value-noise coverage, lit by the sun from above
+// (bright rims where the layer is thin, dark grey-purple where thick) and fogged with the same height fog.
+const cloudUniforms={uTime:{value:0},uSun:{value:sunDir},uSunColor:{value:new THREE.Color(0xffd2a0)},uCover:{value:.72},uSteps:{value:BUDGET.gtao?24:10}};
+const cloudMat=new THREE.ShaderMaterial({transparent:true,depthWrite:false,side:THREE.DoubleSide,fog:true,
+ uniforms:Object.assign({fogColor:fogUniforms.fogColor,fogDensity:fogUniforms.fogDensity,fogSunColor:fogUniforms.fogSunColor,fogSunDir:fogUniforms.fogSunDir,fogHeight:fogUniforms.fogHeight,fogFalloff:fogUniforms.fogFalloff,fogStart:fogUniforms.fogStart},cloudUniforms),
+ vertexShader:`varying vec3 vW;void main(){vW=(modelMatrix*vec4(position,1.)).xyz;gl_Position=projectionMatrix*viewMatrix*vec4(vW,1.);}`,
+ fragmentShader:`varying vec3 vW;uniform float uTime,uCover,uSteps;uniform vec3 uSun,uSunColor;uniform vec3 fogColor;uniform float fogDensity;
+ `+fogGLSL+`
+ float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+ float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}
+ float fbm(vec2 p){float a=.5,s=0.;for(int i=0;i<5;i++){s+=a*vn(p);p=p*2.03+vec2(17.,9.);a*=.5;}return s;}
+ void main(){vec2 p=vW.xz*.0022+vec2(uTime*.004,0.);
+  float d=fbm(p);float dens=smoothstep(1.-uCover,1.-uCover+.35,d);
+  // Cheap lighting: density gradient toward the sun approximates self-shadowing through the layer.
+  float toward=fbm(p+uSun.xz*.06);float lit=clamp((d-toward)*6.+.35,0.,1.);
+  vec3 dark=vec3(.30,.28,.36),bright=uSunColor*.9;vec3 col=mix(dark,bright,lit*(1.-dens*.6));
+  float a=dens*.96;
+  float fogF=heightFogAmount(cameraPosition,vW,fogDensity*.5,fogHeight,fogFalloff);
+  col=mix(col,fogInscatter(cameraPosition,vW),clamp(fogF,0.,1.));
+  gl_FragColor=vec4(col,a);}`});
+const clouds=new THREE.Mesh(new THREE.PlaneGeometry(6000,6000,1,1),cloudMat);clouds.rotation.x=-Math.PI/2;clouds.position.y=240;scene.add(clouds);
+new RGBELoader().load(`../assets/kiara_8_sunset_${suffix}.hdr`,t=>{
+ t.mapping=THREE.EquirectangularReflectionMapping;
+ // Find the HDRI sun so the DirectionalLight, the visible sun disc and the PMREM highlights all agree.
+ const {width,height,data}=t.image;const stride=data.length/(width*height);let best=0,bi=0;
+ for(let i=0;i<width*height;i++){const v=data[i*stride]+data[i*stride+1]+data[i*stride+2];if(v>best){best=v;bi=i;}}
+ const u=(bi%width+.5)/width,v=(t.flipY?1-(Math.floor(bi/width)+.5)/height:(Math.floor(bi/width)+.5)/height);
+ const theta=(u-.5)*2*Math.PI,phi=(v-.5)*Math.PI;const hdrSun=new THREE.Vector3(Math.cos(theta)*Math.cos(phi),Math.sin(phi),Math.sin(theta)*Math.cos(phi));
+ // Yaw needed so hdrSun lands on sunDir's azimuth.
+ const yaw=Math.atan2(sunDir.z,sunDir.x)-Math.atan2(hdrSun.z,hdrSun.x);
+ skyMat.uniforms.uSky.value=t;skyMat.uniforms.uRot.value=-yaw;
+ const pmrem=new THREE.PMREMGenerator(renderer);pmrem.compileEquirectangularShader();const env=pmrem.fromEquirectangular(t);pmrem.dispose();
+ scene.environment=env.texture;scene.environmentIntensity=.55;scene.environmentRotation.set(0,yaw,0);
+ log(`hdr ${width}x${height} half=${t.type===THREE.HalfFloatType} sun elev ${(Math.asin(hdrSun.y)*180/Math.PI).toFixed(1)}deg yaw ${(yaw*180/Math.PI).toFixed(0)}deg`);
+ window.__hdr=true;
+},undefined,e=>log('HDR FAIL '+e));
+sun.position.copy(sunDir).multiplyScalar(400).add(new THREE.Vector3(0,0,-150));sun.target.position.set(0,0,-150);
+fogUniforms.fogSunDir.value.copy(sunDir);
+
+// ---------- 5. Post-processing chain ----------
+const composer=new EffectComposer(renderer);   // r169 default target is HalfFloatType: linear HDR until OutputPass
+composer.addPass(new RenderPass(scene,camera));
+if(BUDGET.gtao){const gtao=new GTAOPass(scene,camera,W,H);gtao.updateGtaoMaterial({radius:2.5,distanceExponent:1,thickness:1.5,scale:1.2,samples:12,distanceFallOff:1,screenSpaceRadius:false});gtao.blendIntensity=.9;composer.addPass(gtao);}
+// Screen-space sun shafts: radial blur of the bright sky/sun toward the sun's screen position, added to the HDR image.
+const shaftPass=new ShaderPass({uniforms:{tDiffuse:{value:null},uSun:{value:new THREE.Vector2(.5,.5)},uStrength:{value:0},uColor:{value:new THREE.Color(0xffc98a)}},
+ vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+ fragmentShader:`uniform sampler2D tDiffuse;uniform vec2 uSun;uniform float uStrength;uniform vec3 uColor;varying vec2 vUv;
+ void main(){vec4 base=texture2D(tDiffuse,vUv);vec2 dir=(uSun-vUv);const int N=24;float decay=.94,w=1.;vec3 acc=vec3(0.);vec2 p=vUv;
+  for(int i=0;i<N;i++){p+=dir*(1./float(N));vec3 c=texture2D(tDiffuse,p).rgb;float lum=dot(c,vec3(.3,.59,.11));acc+=c*smoothstep(1.2,4.,lum)*w;w*=decay;}
+  gl_FragColor=vec4(base.rgb+acc/float(N)*uColor*uStrength,base.a);}`});
+if(BUDGET.shafts)composer.addPass(shaftPass);
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(W,H),.32,.65,1.0));   // strength, radius, threshold (linear HDR units)
+let bokeh=null;if(BUDGET.dof){bokeh=new BokehPass(scene,camera,{focus:14,aperture:.0009,maxblur:.0075});composer.addPass(bokeh);}
+composer.addPass(new OutputPass());        // ACES + sRGB; everything after this is display-referred
+if(BUDGET.smaa)composer.addPass(new SMAAPass(W,H));
+// Final film grade: contrast curve, split-tone (cool shadows / warm highlights), chromatic aberration, vignette, grain.
+const gradePass=new ShaderPass({uniforms:{tDiffuse:{value:null},uTime:{value:0},uRes:{value:new THREE.Vector2(W,H)},uGrain:{value:.045},uVignette:{value:.5},uCA:{value:1.4},uSat:{value:1.06},uContrast:{value:1.16}},
+ vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+ fragmentShader:`uniform sampler2D tDiffuse;uniform float uTime,uGrain,uVignette,uCA,uSat,uContrast;uniform vec2 uRes;varying vec2 vUv;
+ float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+ void main(){vec2 c=vUv-.5;float r2=dot(c,c);
+  vec2 ca=c*r2*uCA/uRes.x*uRes.x*.0035;   // lens fringing grows toward the corners
+  vec3 col=vec3(texture2D(tDiffuse,vUv+ca).r,texture2D(tDiffuse,vUv).g,texture2D(tDiffuse,vUv-ca).b);
+  float l=dot(col,vec3(.2126,.7152,.0722));col=mix(vec3(l),col,uSat);
+  col=(col-.5)*uContrast+.5;
+  col+=(vec3(-.02,-.005,.03))*(1.-l)+vec3(.03,.012,-.02)*l;   // split-tone: teal shadows, amber highlights
+  col*=1.-uVignette*smoothstep(.12,.75,r2);
+  float g=hash(vUv*uRes+fract(uTime)*97.)-.5;col+=g*uGrain*(1.-l*.6);
+  gl_FragColor=vec4(clamp(col,0.,1.),1.);}`});
+composer.addPass(gradePass);
+
+// ---------- 6. Frame loop ----------
+const clock=new THREE.Clock();let frames=0;
+const sunNdc=new THREE.Vector3();
+function frame(){requestAnimationFrame(frame);const t=clock.getElapsedTime();gradePass.uniforms.uTime.value=t;cloudUniforms.uTime.value=t;
+ // Sun screen position for the shafts; fade them out when the sun leaves the frame.
+ sunNdc.copy(sunDir).multiplyScalar(1000).add(camera.position).project(camera);
+ const onScreen=sunNdc.z<1&&Math.abs(sunNdc.x)<1.4&&Math.abs(sunNdc.y)<1.4;
+ shaftPass.uniforms.uSun.value.set(sunNdc.x*.5+.5,sunNdc.y*.5+.5);shaftPass.uniforms.uStrength.value=onScreen?1.1*Math.max(0,1-Math.max(Math.abs(sunNdc.x),Math.abs(sunNdc.y))*.5):0;
+ composer.render();frames++;if(frames===2){log(`tier=${TIER} passes=${composer.passes.length} ${W}x${H} fov ${camera.fov} shadows ${BUDGET.shadowMap}`);window.__frames=frames;}window.__frames=frames;}
+frame();
+</script></body></html>

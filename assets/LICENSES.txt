@@ -1,0 +1,5 @@
+kiara_8_sunset (HDRI) and cliff_side (PBR texture set): Poly Haven, CC0 1.0 Universal (public domain). https://polyhaven.com/
+
+Waterfall Aerial Grass Rock 2K maps: Rob Tuytel, Poly Haven, CC0. https://polyhaven.com/a/aerial_grass_rock
+Waterfall Fir Tree 01 twig color/alpha 2K atlases: Rico Cilliers and Rob Tuytel, Poly Haven, CC0. https://polyhaven.com/a/fir_tree_01
+License: https://polyhaven.com/license ; asset hashes and texture usage: docs/WATERFALL-ASSETS.md in the source repository.

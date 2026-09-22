@@ -1,0 +1,272 @@
+<!doctype html><html><head><meta charset="utf-8"><title>demon dragon (GLB) - rider POV</title><link rel="icon" href="data:,">
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}
+#ui{position:fixed;right:8px;top:8px;font:12px monospace;color:#8f8;text-shadow:0 0 3px #000}
+#ui select{font:12px monospace;background:#123;color:#8f8;border:1px solid #385}</style></head>
+<body><canvas id="c"></canvas><pre id="out" style="position:fixed;left:8px;top:8px;color:#8f8;font:12px monospace;margin:0;text-shadow:0 0 3px #000;max-width:70vw;white-space:pre-wrap"></pre>
+<div id="ui">Dragon <select id="style"></select></div>
+<script type="module">
+// Dev page for dist/dragon-gltf.js (+ rider.js), same layout as dragon.html.
+// ?view=rider (default, camera at the saddle eye looking ahead) | chase (17 m behind, 6.4 m up, like game.js) | orbit
+// ?tier=high|phone  ?input=l,r  ?genre=grey|black|green  ?sun=behind  ?freeze=<phase>  ?turn=1
+// ?dragon=classic|demon (also saved through saveDragonStyle; the <select> top-right switches and reloads)
+// ?bloom=0  ?env=<n> ?roughmap=1 ?headdist=<local units> ?span=<m> ?taillen=<local units> ?headpitchmax=<rad>  (demon tuning, see TUNE_DEFAULT)
+// ?neck=<rad> ?tail=<rad> ?pitch=<rad> ?rim=<n> ?headlevel=<n>  (demon pose tuning, see TUNE_DEFAULT in dragon-gltf.js)
+// ?headscale=<n> ?necktaper=<n> (rider-view head / last-3-neck-bone shrink) ?chaseneck ?chaseheadscale ?chasenecktaper (chase-view twins, used when ?view=chase)
+import * as THREE from 'three';
+import {RGBELoader} from 'three/addons/loaders/RGBELoader.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {BokehPass} from 'three/addons/postprocessing/BokehPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {setTier} from '../quality.js';
+const q=new URLSearchParams(location.search);
+const tier=setTier(q.get('tier')==='phone'?'phone':'high');
+const {DRAGON_STYLES,readDragonStyle,saveDragonStyle}=await import('../dragon-gltf.js');
+if(q.has('dragon'))saveDragonStyle(q.get('dragon'));
+const style=readDragonStyle();
+const sel=document.getElementById('style');
+for(const s of DRAGON_STYLES){const o=document.createElement('option');o.value=s;o.textContent=s;o.selected=s===style;sel.appendChild(o);}
+sel.onchange=()=>{saveDragonStyle(sel.value);const u=new URL(location.href);u.searchParams.delete('dragon');location.href=u.href;};
+const {createDragon}=await import(style==='classic'?'../dragon.js':'../dragon-gltf.js');
+const {createRider}=await import('../rider.js');
+const {wingbeatPose}=await import('../wingbeat.js');
+const out=document.getElementById('out');
+const [inL,inR]=(q.get('input')||'0,0').split(',').map(Number);
+const genre=q.get('genre')||'grey';
+const sunBehind=q.get('sun')==='behind';
+const freeze=q.has('freeze')?Number(q.get('freeze')):null;
+const view=q.get('view')||'rider';
+const orbit=view==='orbit',chase=view==='chase',eyefree=view==='eyefree';   // eyefree: scene camera copying the eye's world transform (diagnostic)
+const turn=q.get('turn')==='1';
+const W=innerWidth,H=innerHeight;
+
+const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:false});
+renderer.setSize(W,H,false);renderer.setPixelRatio(1);renderer.info.autoReset=false;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.82;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=tier==='high'?THREE.PCFSoftShadowMap:THREE.PCFShadowMap;
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x56697a,.0030);
+const camera=new THREE.PerspectiveCamera(H>W?74:62,W/H,.1,2200);
+
+// ---- lighting: one sun, one hemisphere fill, HDRI image-based light (same as dragon.html)
+const sunDir=sunBehind?new THREE.Vector3(0.10,-0.30,-0.95).normalize():new THREE.Vector3(-0.18,0.40,-0.90).normalize();
+const sunColor=new THREE.Color(0xffd7a8);
+const sun=new THREE.DirectionalLight(sunColor,3.2);
+sun.castShadow=true;
+sun.shadow.mapSize.set(tier==='high'?2048:1024,tier==='high'?2048:1024);
+Object.assign(sun.shadow.camera,{left:-24,right:24,top:24,bottom:-24,near:1,far:260});
+sun.shadow.bias=-.0003;sun.shadow.normalBias=.04;sun.shadow.camera.updateProjectionMatrix();
+scene.add(sun,sun.target);
+scene.add(new THREE.HemisphereLight(0x6f8aa0,0x2a2118,.25));
+let hdrReady=false;
+new RGBELoader().load('../assets/kiara_8_sunset_1k.hdr',t=>{
+ t.mapping=THREE.EquirectangularReflectionMapping;
+ const pm=new THREE.PMREMGenerator(renderer);
+ scene.environment=pm.fromEquirectangular(t).texture;
+ scene.environmentIntensity=.6;
+ scene.background=null;
+ pm.dispose();t.dispose();hdrReady=true;
+},undefined,e=>{console.warn('HDR load failed',e);});
+
+// ---- stand-in canyon: two cliff walls, dark water, dark sky sphere
+const loader=new THREE.TextureLoader();
+const cliffTex=loader.load('../assets/cliff_side_diff_1k.jpg');cliffTex.colorSpace=THREE.SRGBColorSpace;cliffTex.wrapS=cliffTex.wrapT=THREE.RepeatWrapping;cliffTex.repeat.set(8,2.5);
+const cliffNor=loader.load('../assets/cliff_side_nor_gl_1k.jpg');cliffNor.wrapS=cliffNor.wrapT=THREE.RepeatWrapping;cliffNor.repeat.set(8,2.5);
+const cliffMat=new THREE.MeshStandardMaterial({map:cliffTex,normalMap:cliffNor,roughness:.95,color:0x6e6258});
+for(const side of [-1,1]){
+ const wall=new THREE.Mesh(new THREE.PlaneGeometry(1400,320,1,1),cliffMat);
+ wall.position.set(side*70,90,-400);
+ wall.rotation.y=-side*Math.PI/2+side*.06;
+ scene.add(wall);
+}
+const water=new THREE.Mesh(new THREE.PlaneGeometry(600,1600),new THREE.MeshPhysicalMaterial({color:0x0b3f46,roughness:.25,metalness:0,clearcoat:1,clearcoatRoughness:.15}));
+water.rotation.x=-Math.PI/2;water.position.set(0,-28,-500);water.receiveShadow=true;scene.add(water);
+const skyDome=new THREE.Mesh(new THREE.SphereGeometry(2000,24,12),new THREE.MeshBasicMaterial({color:0x3e4a56,side:THREE.BackSide,fog:false}));
+scene.add(skyDome);
+
+// ---- dragon + rider
+let readyAt=null;
+const tune={};
+for(const [k,key] of [['neck','neckExtend'],['tail','tailDroop'],['pitch','bodyPitch'],['rim','rim'],['headlevel','headLevel'],['alphatest','alphaTest'],['ao','ao'],['amp','wingAmp'],['neckamp','neckAmp'],['nofollow','noFollow'],['sway','sway'],['roughness','roughness'],['env','envMapIntensity'],['roughmap','roughMap'],['headdist','headFromSeat'],['span','spanWorld'],['taillen','tailLength'],['headpitchmax','headPitchMax'],['torso','torsoAmp'],['bob','bodyBob'],['headscale','headScale'],['necktaper','neckTaper'],['chaseneck','chaseNeckExtend'],['chaseheadscale','chaseHeadScale'],['chasenecktaper','chaseNeckTaper']])if(q.has(k))tune[key]=Number(q.get(k));
+if(chase)tune.riderView=false;   // chase view uses the chase* twins (game.js does the same through model.setRiderView)
+if(q.has('tint'))tune.tint=parseInt(q.get('tint'),16);   // ?tint=7d7269 (hex, no #)
+const beatHold=q.has('beat')?Number(q.get('beat')):null;   // ?beat=0..1 holds the demon flap at that fraction of a stroke (0 = wings at the top)
+const model=createDragon(renderer,{onReady:()=>{readyAt=performance.now();window.__bounds=model.bounds;},tune});
+const {dragon,saddleAnchor,headAnchor,bridleAnchors}=model;
+window.__model=model;window.__THREE=THREE;window.__scene=scene;
+// Diagnostic: skeleton hierarchy, clip track kinds, world bone positions and body cross-sections (dragon-local).
+window.__boneBoxes=(re)=>{
+ const rx=new RegExp(re||'.');const out={};const v=new THREE.Vector3();dragon.updateMatrixWorld(true);const inv=dragon.matrixWorld.clone().invert();
+ model.rig.traverse(m=>{if(!m.isSkinnedMesh)return;m.skeleton.update();const pos=m.geometry.attributes.position,si=m.geometry.attributes.skinIndex;
+  for(let k=0;k<pos.count;k++){const b=m.skeleton.bones[si.getX(k)];if(!rx.test(b.name))continue;m.getVertexPosition(k,v).applyMatrix4(m.matrixWorld).applyMatrix4(inv);
+   let o=out[b.name];if(!o){o=out[b.name]={n:0,min:[1e9,1e9,1e9],max:[-1e9,-1e9,-1e9]};}o.n++;for(let i=0;i<3;i++){const c=v.getComponent(i);if(c<o.min[i])o.min[i]=c;if(c>o.max[i])o.max[i]=c;}}});
+ for(const k in out){out[k].min=out[k].min.map(x=>+x.toFixed(2));out[k].max=out[k].max.map(x=>+x.toFixed(2));}
+ return JSON.stringify(out);
+};
+window.__bob=(bone,n=24)=>{
+ const b=[];model.rig.traverse(o=>{if(o.isBone&&o.name.startsWith(bone))b.push(o);});if(!b.length)return 'no bone';
+ const v=new THREE.Vector3();const out=[];const inv=dragon.matrixWorld.clone().invert();const t0=model.animTime;
+ for(let i=0;i<n;i++){model.seekBeat(i/n);model.update(wingbeatPose(0,0,35),fake,0,0,0);dragon.updateMatrixWorld(true);b[0].getWorldPosition(v).applyMatrix4(inv);out.push([+(i/n).toFixed(2),...v.toArray().map(x=>+x.toFixed(2))]);}
+ return JSON.stringify(out);
+};
+window.__tips=(n=8)=>{const out=[];for(let i=0;i<n;i++){model.seekBeat(i/n);model.update(wingbeatPose(0,0,35),fake,0,0,0);dragon.updateMatrixWorld(true);out.push([+(i/n).toFixed(2),model.wingTip(0,{}).toArray().map(x=>+x.toFixed(1)),model.wingTip(1,{}).toArray().map(x=>+x.toFixed(1))]);}return JSON.stringify(out);};
+window.__liveTips=(ms=4000,every=250)=>new Promise(res=>{const out=[];const t0=performance.now();const iv=setInterval(()=>{out.push([Math.round(performance.now()-t0),window.__frames,+model.clipTime.toFixed(2),model.wingTip(0,{}).toArray().map(x=>+x.toFixed(1)),model.wingTip(1,{}).toArray().map(x=>+x.toFixed(1)),+model.follow.rate.roll.toFixed(3),+fake.roll.toFixed(3)]);if(performance.now()-t0>ms){clearInterval(iv);res(JSON.stringify(out));}},every);});
+window.__liveTips2=(ms=12000)=>new Promise(res=>{const out=[];let lastF=-1;const t0=performance.now();const hp=new THREE.Vector3(),q=new THREE.Quaternion(),sc=new THREE.Vector3();
+ const iv=setInterval(()=>{if(window.__frames===lastF)return;lastF=window.__frames;headAnchor.getWorldPosition(hp);const sh=model.wings[0],hb=model.wings[0].children.find(c=>c.isBone);
+  out.push([window.__frames,+model.clipTime.toFixed(3),model.wingTip(0,{}).toArray().map(x=>+x.toFixed(1)),hp.toArray().map(x=>+x.toFixed(1)),sh.quaternion.toArray().map(x=>+x.toFixed(3)),+sh.scale.x.toFixed(3),model.rig.getObjectByName('l_hand75_91').quaternion.toArray().map(x=>+x.toFixed(3)),+model.rig.getObjectByName('l_hand75_91').scale.x.toFixed(3),model.rig.getObjectByName('pelvis5_218').position.toArray().map(x=>+x.toFixed(3))]);
+  if(performance.now()-t0>ms){clearInterval(iv);res(JSON.stringify(out));}},60);});
+window.__clipScan=(steps=52)=>{const out=[];const hp=new THREE.Vector3(),sp=new THREE.Vector3(),ap=new THREE.Vector3();const b=model.bounds;
+ for(let i=0;i<steps;i++){const clipT=i/steps*b.clipDuration;model.seekBeat((clipT-b.clipTopOffset)/b.beatSeconds);model.update(wingbeatPose(0,0,35),fake,0,0,0);dragon.updateMatrixWorld(true);
+  headAnchor.getWorldPosition(hp);saddleAnchor.getWorldPosition(ap);model.rig.getObjectByName('spine_0813_141').getWorldPosition(sp);
+  out.push([+clipT.toFixed(2),model.wingTip(0,{}).toArray().map(x=>+x.toFixed(1)),model.wingTip(1,{}).toArray().map(x=>+x.toFixed(1)),hp.clone().sub(ap).toArray().map(x=>+x.toFixed(1)),sp.clone().sub(ap).toArray().map(x=>+x.toFixed(1))]);}
+ return JSON.stringify(out);};
+window.__measure=(zs)=>{
+ if(!model.rig)return 'not ready';
+ const keys=model.boneKeys||new Map();const bones=[];const v=new THREE.Vector3();
+ dragon.updateMatrixWorld(true);
+ const inv=dragon.matrixWorld.clone().invert();
+ model.rig.traverse(o=>{if(o.isBone){o.getWorldPosition(v);v.applyMatrix4(inv);const s=o.getWorldScale(new THREE.Vector3());bones.push({n:o.name,p:o.parent&&o.parent.name,pos:v.toArray().map(x=>+x.toFixed(3)),s:+s.x.toFixed(4)});}});
+ const tracks=[];if(model.mixer){for(const a of model.mixer._actions){for(const t of a.getClip().tracks)tracks.push(t.name+':'+t.times.length);}}
+ const meshes=[];model.rig.traverse(o=>{if(o.isSkinnedMesh)meshes.push(o);});
+ const prof={};
+ for(const z of (zs||[])){prof[z]={w:0,top:-1e9,bot:1e9,n:0};}
+ for(const m of meshes){
+  m.skeleton.update();
+  const pos=m.geometry.attributes.position,si=m.geometry.attributes.skinIndex;
+  const body=m.skeleton.bones.map(b=>/^(spine_|pelvis|hips|root$|neck_0[12]|l_clavicle|r_clavicle)/.test(b.name));
+  for(let k=0;k<pos.count;k++){
+   if(!body[si.getX(k)])continue;
+   m.getVertexPosition(k,v).applyMatrix4(m.matrixWorld).applyMatrix4(inv);
+   for(const z of (zs||[])){const P=prof[z];if(Math.abs(v.z-z)<.15){P.n++;if(Math.abs(v.x)>P.w)P.w=Math.abs(v.x);if(v.y>P.top)P.top=v.y;if(v.y<P.bot)P.bot=v.y;}}
+  }
+ }
+ const mats=[];model.rig.traverse(o=>{if(o.isMesh){const m=o.material;mats.push({name:o.name,map:!!m.map,normal:!!m.normalMap,rough:!!m.roughnessMap,metal:!!m.metalnessMap,ao:!!m.aoMap,r:m.roughness,env:m.envMapIntensity,color:m.color.getHexString()});}});
+ return JSON.stringify({bones,tracks,prof,mats,srcMats:model.bounds.srcMaterial||null});
+};
+scene.add(dragon);
+model.setSun(sunDir,sunColor);
+const genreColor={grey:0x5a6a5c,black:0x1c1e1f,green:0x3f5a3a}[genre]||0x5a6a5c;
+if(style==='classic')model.materials.skin.color.set(genreColor);
+const rider=createRider({saddleAnchor,bridleAnchors});
+rider.setReinColor(genre==='black'?'blue':genre==='green'?'orange':'leather');
+if(orbit||chase){scene.add(camera);rider.group.visible=false;}else if(eyefree){scene.add(camera);}else rider.eye.add(camera);
+
+// ---- post: RenderPass -> Bokeh (high, rider only) -> Bloom -> Output
+const composer=new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene,camera));
+let bokeh=null;
+if(tier==='high'&&!orbit&&!chase&&q.get('nobokeh')!=='1'){bokeh=new BokehPass(scene,camera,{focus:12,aperture:.0006,maxblur:.006});composer.addPass(bokeh);}
+if(bokeh&&q.has('maxblur'))bokeh.uniforms.maxblur.value=Number(q.get('maxblur'));
+if(bokeh&&q.get('skipdepth')==='1'){const orig=bokeh.render.bind(bokeh);bokeh.render=(r,w,rb,...a)=>{const m=bokeh.materialDepth;bokeh.materialDepth=null;scene.overrideMaterial=null;try{orig(r,w,rb,...a);}finally{bokeh.materialDepth=m;scene.overrideMaterial=null;}};}
+if(q.get('bloom')!=='0')composer.addPass(new UnrealBloomPass(new THREE.Vector2(W,H),.3,.6,1.0));   // ?bloom=0: the water glare's bloom is what turns any dragon in front of it cream
+composer.addPass(new OutputPass());
+
+const fake={pitch:0,roll:0,yaw:0,speed:61,vx:0,alt:0,distance:0};
+const headPos=new THREE.Vector3(),camPos=new THREE.Vector3(),look=new THREE.Vector3();
+let phase=freeze!==null?freeze:0,last=performance.now(),start=last;
+window.__frames=0;
+function frame(now){
+ requestAnimationFrame(frame);
+ const dt=Math.min(.05,(now-last)/1000);last=now;
+ const t=(now-start)/1000;
+ const pose=wingbeatPose(phase,0,35);
+ if(freeze===null)phase+=dt*Math.PI*2*pose.frequency;
+ fake.roll=Math.sin(t*.6)*.3;
+ if(turn){fake.yaw=Math.sin(t*.5)*.35;fake.pitch=Math.sin(t*.8)*.12;}
+ dragon.position.set(0,pose.body*1.6,0);
+ dragon.rotation.set(fake.pitch,fake.yaw,fake.roll,'YXZ');
+ if(beatHold!==null&&model.seekBeat){model.seekBeat(beatHold);fake.roll=0;}
+ model.update(pose,fake,inL,inR,freeze===null&&beatHold===null?t:0);
+ rider.update(inL,inR,fake,dt);
+ sun.position.copy(dragon.position).addScaledVector(sunDir,120);
+ sun.target.position.copy(dragon.position);
+ dragon.updateMatrixWorld(true);
+ if(chase){camera.position.set(0,dragon.position.y+6.4,17);look.set(0,dragon.position.y+1.5,-35);camera.up.set(-fake.roll*.06,1,0);camera.lookAt(look);}
+ if(orbit){camera.position.set(14,9,12);camera.lookAt(0,1,-3);}
+ if(eyefree){rider.eye.getWorldPosition(camera.position);rider.eye.getWorldQuaternion(camera.quaternion);}
+ camera.updateMatrixWorld(true);
+ camera.getWorldPosition(camPos);headAnchor.getWorldPosition(headPos);
+ const headDist=camPos.distanceTo(headPos);
+ if(bokeh)bokeh.uniforms.focus.value=headDist;
+ renderer.info.reset();
+ composer.render();
+ if(window.__afterRender){const f=window.__afterRender;window.__afterRender=null;f();}
+ window.__frames++;
+ if(window.__frames%5===1){
+  const info=renderer.info.render;
+  const span=model.wingTip(0,pose).distanceTo(model.wingTip(1,pose));
+  const b=model.bounds||{};
+  out.textContent=`dragon=${style} view=${view} tier=${tier} ready=${model.ready!==undefined?model.ready:'n/a'} passes=${composer.passes.length} calls=${info.calls} tris=${info.triangles} anim=${model.clipTime!==undefined?model.clipTime.toFixed(2)+'s/'+(b.clipDuration||0).toFixed(2)+'s':'n/a'} beat=${b.beatSeconds?b.beatSeconds.toFixed(2)+'s':'-'} head=${headDist.toFixed(1)}m span=${span.toFixed(1)}m hdr=${hdrReady} frames=${window.__frames} headLead=${(model.follow.head.yaw*57.3).toFixed(1)}deg tailLag=${(model.follow.tail[model.follow.tail.length-1].yaw*57.3).toFixed(1)}deg`
+   +(b.size?`\nmodel size(local)=${b.size.map(v=>v.toFixed(2))} world=${b.sizeWorld.map(v=>v.toFixed(1))}m rigScale=${b.rigScale.toFixed(3)} seat=${b.seatBone}@${b.seatWorld.map(v=>v.toFixed(2))} head=${b.head.map(v=>v.toFixed(2))} tris=${b.tris} wingScale=${b.wingScale?b.wingScale.shoulder.toFixed(2)+'x'+b.wingScale.hand.toFixed(2):'-'} tailBone=${b.tailBoneScale?b.tailBoneScale.toFixed(3):'-'} spanWorld=${b.spanWorld?b.spanWorld.toFixed(1):'-'}m`:'');
+ }
+}
+requestAnimationFrame(frame);
+window.__diag=()=>{
+ const meshes=[];dragon.traverse(o=>{if(o.isMesh){const p=new THREE.Vector3();o.getWorldPosition(p);const s=new THREE.Vector3();o.getWorldScale(s);meshes.push({name:o.name,skinned:!!o.isSkinnedMesh,visible:o.visible,culled:o.frustumCulled,mat:o.material.name||o.material.type,pos:p.toArray().map(v=>+v.toFixed(2)),scale:s.toArray().map(v=>+v.toFixed(4)),layers:o.layers.mask});}});
+ const cp=new THREE.Vector3(),cq=new THREE.Quaternion(),cs=new THREE.Vector3();camera.matrixWorld.decompose(cp,cq,cs);
+ const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(cq);
+ const hp=new THREE.Vector3();headAnchor.getWorldPosition(hp);
+ return JSON.stringify({camPos:cp.toArray().map(v=>+v.toFixed(2)),camScale:cs.toArray().map(v=>+v.toFixed(3)),camFwd:fwd.toArray().map(v=>+v.toFixed(2)),camParent:camera.parent&&camera.parent.name,head:hp.toArray().map(v=>+v.toFixed(2)),near:camera.near,far:camera.far,fov:camera.fov,meshes});
+};
+// Diagnostic: render the scene into a float target (and a packed-depth target like BokehPass) and read
+// back small pixel blocks so NaN / Inf / sparse coverage can be seen directly.
+window.__pixels=(px=640,py=450)=>{
+ const rt=new THREE.WebGLRenderTarget(W,H,{type:THREE.FloatType});
+ renderer.setRenderTarget(rt);renderer.clear();renderer.render(scene,camera);
+ const buf=new Float32Array(4*4*4);renderer.readRenderTargetPixels(rt,px,H-py,4,4,buf);
+ const rtd=new THREE.WebGLRenderTarget(W,H);const dm=new THREE.MeshDepthMaterial();dm.depthPacking=THREE.RGBADepthPacking;dm.blending=THREE.NoBlending;
+ scene.overrideMaterial=dm;renderer.setRenderTarget(rtd);renderer.setClearColor(0xffffff,1);renderer.clear();renderer.render(scene,camera);scene.overrideMaterial=null;
+ const db=new Uint8Array(4*4*4);renderer.readRenderTargetPixels(rtd,px,H-py,4,4,db);
+ renderer.setRenderTarget(null);rt.dispose();rtd.dispose();
+ const unpack=(r,g,b,a)=>(r/255)+(g/255)/255+(b/255)/65025+(a/255)/16581375;
+ const depths=[];for(let i=0;i<16;i++)depths.push(+unpack(db[i*4],db[i*4+1],db[i*4+2],db[i*4+3]).toFixed(5));
+ const cols=[];for(let i=0;i<16;i++)cols.push([buf[i*4],buf[i*4+1],buf[i*4+2],buf[i*4+3]].map(v=>Number.isFinite(v)?+v.toFixed(3):String(v)));
+ return JSON.stringify({px,py,color:cols,depth:depths,near:camera.near,far:camera.far});
+};
+// Diagnostic: read the composer's colour buffer (half float) right after the RenderPass at a pixel block.
+window.__rb=(px=640,py=430)=>new Promise(res=>{
+ const pass=composer.passes[0],orig=pass.render.bind(pass);
+ pass.render=(renderer,writeBuffer,readBuffer,...a)=>{
+  orig(renderer,writeBuffer,readBuffer,...a);
+  pass.render=orig;
+  const raw=new Uint16Array(4*4*4);renderer.readRenderTargetPixels(readBuffer,px,H-py,4,4,raw);
+  const h2f=h=>{const s=(h&0x8000)?-1:1,e=(h>>10)&0x1f,f=h&0x3ff;if(e===0)return s*Math.pow(2,-14)*(f/1024);if(e===31)return f?NaN:s*Infinity;return s*Math.pow(2,e-15)*(1+f/1024);};
+  const cols=[];for(let i=0;i<16;i++)cols.push([raw[i*4],raw[i*4+1],raw[i*4+2],raw[i*4+3]].map(h2f).map(v=>Number.isFinite(v)?+v.toFixed(3):String(v)));
+  res(JSON.stringify({px,py,type:readBuffer.texture.type,minFilter:readBuffer.texture.minFilter,magFilter:readBuffer.texture.magFilter,fmt:readBuffer.texture.format,cols}));
+ };
+});
+// Same-frame comparison: colour buffer after the RenderPass vs the final canvas, for a column of pixels.
+window.__cmp=(px=640,ys=[300,340,380,420,460,500,540,580,620])=>new Promise(res=>{
+ const pass=composer.passes[0],orig=pass.render.bind(pass);const rb=[];
+ const h2f=h=>{const s=(h&0x8000)?-1:1,e=(h>>10)&0x1f,f=h&0x3ff;if(e===0)return s*Math.pow(2,-14)*(f/1024);if(e===31)return f?NaN:s*Infinity;return s*Math.pow(2,e-15)*(1+f/1024);};
+ pass.render=(renderer,writeBuffer,readBuffer,...a)=>{orig(renderer,writeBuffer,readBuffer,...a);pass.render=orig;
+  for(const y of ys){const raw=new Uint16Array(4);renderer.readRenderTargetPixels(readBuffer,px,H-y,1,1,raw);rb.push(Array.from(raw).map(h2f).map(v=>+v.toFixed(3)));}};
+ window.__afterRender=()=>{const gl=renderer.getContext();const out=[];for(const y of ys){const b=new Uint8Array(4);gl.readPixels(px,H-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,b);out.push(Array.from(b));}
+  res(JSON.stringify({px,rows:ys.map((y,i)=>({y,renderPass:rb[i],canvas:out[i]}))}));};
+});
+// Diagnostic: which objects under the dragon carry NaN in position/quaternion/scale/matrixWorld.
+window.__nan=()=>{
+ const bad=[];let n=0;
+ dragon.traverse(o=>{n++;const q=o.quaternion,p=o.position,s=o.scale,m=o.matrixWorld.elements;
+  const nq=[q.x,q.y,q.z,q.w].some(v=>!Number.isFinite(v)),np=[p.x,p.y,p.z].some(v=>!Number.isFinite(v)),ns=[s.x,s.y,s.z].some(v=>!Number.isFinite(v)),nm=m.some(v=>!Number.isFinite(v));
+  const len=Math.hypot(q.x,q.y,q.z,q.w);
+  if(nq||np||ns||nm||Math.abs(len-1)>1e-3)bad.push({name:o.name,type:o.type,q:nq,p:np,s:ns,m:nm,qlen:+len.toFixed(4),parent:o.parent&&o.parent.name});});
+ const hp=new THREE.Vector3();headAnchor.getWorldPosition(hp);
+ return JSON.stringify({objects:n,bad:bad.slice(0,12),badCount:bad.length,head:hp.toArray().map(v=>+v.toFixed(2)),wingWeight:model.mixer&&model.mixer._actions.map(a=>[a.getClip().name,a.getEffectiveWeight(),a.time.toFixed(2)])});
+};
+// Two canvas captures `gapMs` apart (taken inside the frame, right after composer.render, so the
+// drawing buffer is still valid) plus the wing-tip world positions at each: proves the flap moves.
+window.__snap2=(gapMs=1500)=>new Promise(res=>{
+ const grab=()=>new Promise(r=>{window.__afterRender=()=>{const p=wingbeatPose(phase,0,35);r({png:renderer.domElement.toDataURL('image/png'),tipL:model.wingTip(0,p).toArray().map(v=>+v.toFixed(2)),tipR:model.wingTip(1,p).toArray().map(v=>+v.toFixed(2)),anim:model.clipTime,t:performance.now()});};});
+ grab().then(a=>setTimeout(()=>grab().then(b=>res(JSON.stringify({a:{tipL:a.tipL,tipR:a.tipR,anim:a.anim},b:{tipL:b.tipL,tipR:b.tipR,anim:b.anim},gapMs:Math.round(b.t-a.t),pngA:a.png,pngB:b.png}))),gapMs));
+});
+window.__follow=()=>JSON.stringify({rate:model.follow.rate,head:model.follow.head,neckYaw:model.follow.neck.map(n=>+n.yaw.toFixed(3)),tailYaw:model.follow.tail.map(n=>+n.yaw.toFixed(3)),fakeYaw:fake.yaw});
+window.__state=()=>{
+ const a=new THREE.Vector3(),e=new THREE.Vector3();saddleAnchor.getWorldPosition(a);rider.eye.getWorldPosition(e);
+ const s=new THREE.Vector3();saddleAnchor.getWorldScale(s);
+ return JSON.stringify({ready:model.ready,readyMs:readyAt===null?null:Math.round(readyAt-start),bounds:model.bounds,anchorWorld:a.toArray().map(v=>+v.toFixed(3)),anchorWorldScale:s.toArray().map(v=>+v.toFixed(3)),eyeWorld:e.toArray().map(v=>+v.toFixed(3)),tipL:model.wingTip(0,wingbeatPose(phase,0,35)).toArray().map(v=>+v.toFixed(2)),tipR:model.wingTip(1,wingbeatPose(phase,0,35)).toArray().map(v=>+v.toFixed(2)),clipTime:model.clipTime,frames:window.__frames});
+};
+</script></body></html>

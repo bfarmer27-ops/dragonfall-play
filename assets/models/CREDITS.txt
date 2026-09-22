@@ -1,0 +1,5 @@
+demon-dragon.glb
+  "Demon Dragon Full Texture" by endlessvoidmc (https://sketchfab.com/endlessvoidmc)
+  Source: https://sketchfab.com/3d-models/demon-dragon-full-texture-19035a72cdcb4abfa2c161de32823e6b
+  License: CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+  Changes: decimated from 312,750 to 40,067 triangles in Blender 4.2; only the flying animation kept; re-exported as GLB (2026-09-10).

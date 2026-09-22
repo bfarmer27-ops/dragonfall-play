@@ -1,0 +1,155 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Dragonfall render module lab</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:100vh}#out{position:fixed;left:8px;top:8px;color:#9f9;font:12px monospace;white-space:pre;pointer-events:none;text-shadow:0 0 3px #000}</style>
+</head><body><canvas id="c"></canvas><pre id="out"></pre>
+<script type="module">
+// Dev page for dist/render.js. Builds a stand-in canyon that exercises every pass of the chain
+// (walls for GTAO/fog, water for bloom, a torus-knot "dragon" in focus, hand spheres out of focus, a sun sphere for
+// shafts + bloom) and prints proof: tier, pass count, pixel ratio + cap, draw calls, first-frame compile time.
+// Query: ?tier=phone (5 passes) | ?motion=1 (turn motion blur) | ?pitch=-0.24 (camera pitch, radians).
+import {setTier} from '../quality.js';
+const q = new URLSearchParams(location.search);
+setTier(q.get('tier') === 'phone' ? 'phone' : 'high');
+const THREE = await import('three');
+const {RGBELoader} = await import('three/addons/loaders/RGBELoader.js');
+const {createRenderSystem} = await import('../render.js');
+const {TIER, BUDGET} = await import('../quality.js');
+
+const out = document.getElementById('out');
+const log = s => { out.textContent += s + '\n'; };
+const canvas = document.getElementById('c');
+const W = innerWidth, H = innerHeight;
+
+// ---------- Scene ----------
+const scene = new THREE.Scene();
+scene.background = null;                                   // contract: the sky is a mesh; GTAO needs a null background
+scene.fog = new THREE.FogExp2(0x56697a, 0.0030);           // sky.js will own this in the game; plain FogExp2 here
+const camera = new THREE.PerspectiveCamera(56, W / H, 0.1, 2200);
+// Spec camera is (0,25,0) pitched -0.24; at that pitch the fixed sun (23.6 deg up) sits above the top edge and the
+// shafts fade out by design, so the default here is +0.10 to put the sun disc in the upper third like the references. ?pitch= overrides.
+const pitch = q.has('pitch') ? parseFloat(q.get('pitch')) : 0.10;
+camera.position.set(0, 25, 0);
+camera.rotation.set(pitch, 0, 0);
+scene.add(camera);
+
+const sunDir = new THREE.Vector3(-0.18, 0.40, -0.90).normalize();
+const texSize = BUDGET[TIER].textureSize;
+const loader = new THREE.TextureLoader();
+function tex(name, srgb) {
+ const t = loader.load(new URL(`../assets/cliff_side_${name}_${texSize}.jpg`, import.meta.url).href);
+ t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 3);
+ if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+ return t;
+}
+const rockMat = new THREE.MeshStandardMaterial({map: tex('diff', true), normalMap: tex('nor_gl', false), roughness: 0.95, metalness: 0});
+// Two textured canyon walls 70 m either side, from below the water to 190 m up.
+for (const side of [-1, 1]) {
+ const wall = new THREE.Mesh(new THREE.PlaneGeometry(1400, 220, 1, 1), rockMat);
+ wall.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
+ wall.position.set(side * 70, 80, -500);
+ scene.add(wall);
+}
+// A few boulders along the walls at increasing distance so the fog gradient and depth of field have something to grade.
+const boulderGeo = new THREE.DodecahedronGeometry(9, 1);
+for (let i = 0; i < 14; i++) {
+ const side = i % 2 ? 1 : -1;
+ const b = new THREE.Mesh(boulderGeo, rockMat);
+ b.position.set(side * (52 + (i * 7) % 12), -22 + (i * 5) % 14, -40 - i * 55);
+ b.rotation.set(i * 0.7, i * 1.3, i * 0.4);
+ b.scale.set(1.4, 0.9 + (i % 3) * 0.3, 1.1);
+ scene.add(b);
+}
+// Dark water plane reflecting the PMREM sky: the sun path is what bloom should catch.
+const water = new THREE.Mesh(new THREE.PlaneGeometry(400, 1600, 1, 1),
+ new THREE.MeshPhysicalMaterial({color: 0x0b3a3f, roughness: 0.4, metalness: 0, envMapIntensity: 0.5}));
+water.rotation.x = -Math.PI / 2; water.position.set(0, -30, -600); water.receiveShadow = true;
+scene.add(water);
+// Torus-knot "dragon" 12 m ahead: the focus subject.
+const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(1.25, 0.36, 160, 28),
+ new THREE.MeshPhysicalMaterial({color: 0x3f6a4a, roughness: 0.42, metalness: 0.05, clearcoat: 0.5, clearcoatRoughness: 0.3}));
+knot.position.set(0, 25 - 12 * Math.tan(-pitch), -12); knot.castShadow = knot.receiveShadow = true;
+scene.add(knot);
+// Hands: two dark spheres 0.6 m ahead at the bottom corners, parented to the camera so they stay put.
+const handMat = new THREE.MeshStandardMaterial({color: 0x3b2a1e, roughness: 0.6});
+for (const side of [-1, 1]) {
+ const hand = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 12), handMat);
+ hand.position.set(side * 0.33, -0.25, -0.6); hand.castShadow = true;
+ camera.add(hand);
+}
+// Sun: an emissive sphere 900 m along the sun direction (fog off so it stays bright enough to bloom and cast shafts).
+const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(26, 24, 16),
+ new THREE.MeshStandardMaterial({color: 0x000000, emissive: 0xfff0d0, emissiveIntensity: 6, fog: false}));
+sunMesh.position.copy(sunDir).multiplyScalar(900).add(camera.position);
+scene.add(sunMesh);
+// Sky sphere (the sky module replaces this with its dome).
+const sky = new THREE.Mesh(new THREE.SphereGeometry(1900, 32, 20), new THREE.MeshBasicMaterial({color: 0x3a3f4d, side: THREE.BackSide, fog: false}));
+scene.add(sky);
+// Transparent mist sprites (soft radial puffs) prove the transparent-object guard: no AO/DOF halo around them.
+function puffTexture() {
+ const c = document.createElement('canvas'); c.width = c.height = 128;
+ const g = c.getContext('2d'); const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+ grd.addColorStop(0, 'rgba(255,255,255,0.9)'); grd.addColorStop(0.45, 'rgba(255,255,255,0.35)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+ g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+ const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const mistMat = new THREE.SpriteMaterial({map: puffTexture(), color: 0x9fb2bd, transparent: true, opacity: 0.35, depthWrite: false});
+for (let i = 0; i < 6; i++) {
+ const mist = new THREE.Sprite(mistMat);
+ mist.scale.set(26 + i * 6, 14 + i * 3, 1);
+ mist.position.set((i % 2 ? 1 : -1) * (18 + i * 6), -18 + i * 3, -60 - i * 70);
+ scene.add(mist);
+}
+
+// Lights: one sun (contract section 3) + the hemisphere fill.
+const sun = new THREE.DirectionalLight(0xffd7a8, 3.2);
+sun.castShadow = true; sun.shadow.mapSize.set(BUDGET[TIER].shadowMap, BUDGET[TIER].shadowMap);
+Object.assign(sun.shadow.camera, {left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 260});
+sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.04; sun.shadow.camera.updateProjectionMatrix();
+sun.position.copy(knot.position).addScaledVector(sunDir, 120); sun.target.position.copy(knot.position);
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0x6f8aa0, 0x2a2118, 0.25));
+
+// ---------- Render system under test ----------
+const t0 = performance.now();
+const rs = createRenderSystem({canvas, scene, camera});
+rs.setSize(W, H);
+rs.setSunDirection(sunDir);
+rs.setFocusDistance(12);
+if (q.get('motion') === '1') rs.setMotion(0.6, 1, 0);
+rs.render(1 / 60);
+const compileMs = performance.now() - t0;
+window.__rs = rs;
+
+// Image-based light: PMREM from the sunset HDRI (1k on phone, 2k on high), sky kept null.
+new RGBELoader().load(new URL(`../assets/kiara_8_sunset_${texSize}.hdr`, import.meta.url).href, t => {
+ t.mapping = THREE.EquirectangularReflectionMapping;
+ const pmrem = new THREE.PMREMGenerator(rs.renderer);
+ pmrem.compileEquirectangularShader();
+ scene.environment = pmrem.fromEquirectangular(t).texture;
+ scene.environmentIntensity = 0.6;
+ pmrem.dispose(); t.dispose();
+ window.__hdr = true;
+}, undefined, e => log('HDR FAIL ' + e));
+
+// ---------- Frame loop + proof line ----------
+const clock = new THREE.Clock();
+let frames = 0;
+window.__frames = 0;
+function frame() {
+ requestAnimationFrame(frame);
+ const dt = Math.min(clock.getDelta(), 0.1);
+ knot.rotation.y += dt * 0.25;
+ rs.render(dt);
+ frames++; window.__frames = frames;
+ if (frames === 3) {
+  const info = rs.renderer.info.render;
+  out.textContent = '';
+  log(`tier=${rs.tier} passes=${rs.composer.passes.length} webgl2 ${!!rs.renderer.capabilities.isWebGL2}`);
+  log(`pixelRatio=${rs.getPixelRatio().toFixed(2)} cap=${rs.getPixelRatioCap()} dpr=${devicePixelRatio} size=${W}x${H}`);
+  log(`calls=${info.calls} triangles=${info.triangles} firstFrame=${compileMs.toFixed(0)}ms motion=${q.get('motion') === '1' ? 'on' : 'off'}`);
+  log(`chain: ${rs.composer.passes.map(p => p.constructor.name === 'ShaderPass' ? (p === rs.passes.grade ? 'Grade' : p === rs.passes.fxaa ? 'FXAA' : 'Shafts') : p.constructor.name).join(' > ')}`);
+ }
+}
+frame();
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); rs.setSize(innerWidth, innerHeight); });
+</script></body></html>

@@ -1,0 +1,153 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Dragonfall world lab</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:100vh}#out{position:fixed;left:8px;top:8px;margin:0;color:#9f9;font:12px monospace;white-space:pre;text-shadow:0 0 3px #000}</style></head>
+<body><canvas id="c"></canvas><pre id="out"></pre>
+<script type="module">
+// Lab page for the world module (terrain.js + water.js + dressing.js). Rider-view camera, minimal composer.
+// Sky: by default the REAL sky module (../sky.js: sun, hemisphere fill, HDRI IBL, height fog, dome, clouds) is used so
+// the shot matches the game; ?sky=0 (or a failed import) falls back to the stand-in sky the spec describes
+// (exp2 fog, dark dome, local sun + PMREM), so this page never depends on sky.js existing.
+// Query flags: ?tier=phone|high, ?d=NNN flown distance, ?alt=NN metres above water, ?x=NN offset from the canyon centre,
+// ?roll=R radians, ?look=ahead|sun, ?mood=teal|dark water mood, ?fly=1 keeps flying forward, ?sky=0 stand-in sky.
+import * as THREE from 'three';
+import {RGBELoader} from 'three/addons/loaders/RGBELoader.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+const q=new URLSearchParams(location.search);
+// Tier is chosen BEFORE any module reads it (modules read TIER at call time inside their create*() functions).
+const quality=await import('../quality.js');
+quality.setTier(q.get('tier')==='phone'?'phone':'high');
+const TIER=quality.TIER,BUDGET=quality.BUDGET;// read AFTER setTier (a destructured import would be a stale snapshot)
+// sky.js rewrites the fog shader chunks at import time, so it must be imported before any material compiles.
+let skyMod=null;
+if(q.get('sky')!=='0'){try{skyMod=await import('../sky.js');}catch(e){console.warn('sky.js not available, using the stand-in sky',e);}}
+const {centerAt}=await import('../flight.js');
+const terrainMod=await import('../terrain.js');
+const {createTerrain,createArchGeometry,createBoulderGeometry,terrainHeight,worldSlope}=terrainMod;
+const {createWater}=await import('../water.js');
+const {createDressing,fallPlacement,nextWaterfall}=await import('../dressing.js');
+const budget=BUDGET[TIER];
+const out=document.getElementById('out');const lines=[];const log=s=>{lines.push(s);out.textContent=lines.join('\n');};
+const canvas=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:false,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,TIER==='phone'?1.5:budget.maxPixelRatio));renderer.setSize(innerWidth,innerHeight,false);
+renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.82;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=TIER==='high'?THREE.PCFSoftShadowMap:THREE.PCFShadowMap;
+const scene=new THREE.Scene();
+scene.background=null;
+const camera=new THREE.PerspectiveCamera(56,innerWidth/innerHeight,.3,2600);
+// ONE fixed sun (contract 3): from the scene toward the sun, ahead, slightly left, 23.6 degrees up.
+const sunDir=new THREE.Vector3(-.18,.40,-.90).normalize();
+const sunColor=new THREE.Color(0xffd7a8);
+let sun,skySystem=null,skyStandin=null,skyReady=Promise.resolve();
+if(skyMod){
+ // Real sky: it creates the sun light, the fill, the fog, the dome, the clouds and (async) the PMREM environment.
+ skySystem=skyMod.createSky({renderer,scene});
+ sun=skySystem.sunLight;
+ skyReady=skySystem.ready.then(()=>log(`sky REAL (sky.js) hdr ${skySystem.info.hdrSize} sun elev ${skySystem.info.sunElevDeg.toFixed(1)}deg fog ${skySystem.fogUniforms.fogDensity.value}`));
+}else{
+ // Stand-in sky per the spec: exp2 fog, dark dome, sun + hemisphere, PMREM from the HDRI yawed to the fixed sun.
+ scene.fog=new THREE.FogExp2(0x56697a,.0030);
+ sun=new THREE.DirectionalLight(sunColor,3.2);sun.castShadow=true;sun.shadow.mapSize.set(budget.shadowMap,budget.shadowMap);
+ Object.assign(sun.shadow.camera,{left:-24,right:24,top:24,bottom:-24,near:1,far:260});sun.shadow.bias=-.0003;sun.shadow.normalBias=.04;sun.shadow.camera.updateProjectionMatrix();
+ scene.add(sun,sun.target);
+ scene.add(new THREE.HemisphereLight(0x6f8aa0,0x2a2118,.25));
+ const skyMat=new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,fog:false,
+  uniforms:{uTop:{value:new THREE.Color(0x3a3f4d)},uHorizon:{value:scene.fog.color}},
+  vertexShader:`varying vec3 vDir;void main(){vDir=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+  fragmentShader:`varying vec3 vDir;uniform vec3 uTop;uniform vec3 uHorizon;
+   void main(){float h=smoothstep(-.02,.35,normalize(vDir).y);gl_FragColor=vec4(mix(uHorizon,uTop,h),1.);
+   #include <tonemapping_fragment>
+   #include <colorspace_fragment>}`});
+ skyStandin=new THREE.Mesh(new THREE.SphereGeometry(2200,32,20),skyMat);skyStandin.frustumCulled=false;scene.add(skyStandin);
+ const hdrName=budget.textureSize==='2k'?'kiara_8_sunset_2k.hdr':'kiara_8_sunset_1k.hdr';
+ skyReady=new Promise(resolve=>new RGBELoader().load('../assets/'+hdrName,t=>{
+  t.mapping=THREE.EquirectangularReflectionMapping;
+  // Find the HDRI sun (brightest texel) so the IBL highlights agree with the DirectionalLight.
+  const {width,height,data}=t.image;const stride=data.length/(width*height);const half=t.type===THREE.HalfFloatType;
+  const val=v=>half?THREE.DataUtils.fromHalfFloat(v):v;
+  let best=-1,bi=0;
+  for(let i=0;i<width*height;i++){const v=val(data[i*stride])+val(data[i*stride+1])+val(data[i*stride+2]);if(v>best){best=v;bi=i;}}
+  const u=(bi%width+.5)/width,v=t.flipY?1-(Math.floor(bi/width)+.5)/height:(Math.floor(bi/width)+.5)/height;
+  const theta=(u-.5)*2*Math.PI,phi=(v-.5)*Math.PI;const hdrSun=new THREE.Vector3(Math.cos(theta)*Math.cos(phi),Math.sin(phi),Math.sin(theta)*Math.cos(phi));
+  const yaw=Math.atan2(sunDir.z,sunDir.x)-Math.atan2(hdrSun.z,hdrSun.x);
+  const pmrem=new THREE.PMREMGenerator(renderer);pmrem.compileEquirectangularShader();const env=pmrem.fromEquirectangular(t);pmrem.dispose();t.dispose();
+  scene.environment=env.texture;scene.environmentIntensity=.6;scene.environmentRotation.set(0,yaw,0);
+  log(`sky STAND-IN hdr ${hdrName} ${width}x${height} sun elev ${(Math.asin(hdrSun.y)*180/Math.PI).toFixed(1)}deg yaw ${(yaw*180/Math.PI).toFixed(0)}deg`);
+  resolve();
+ },undefined,e=>{log('HDR FAIL '+e);resolve();}));
+}
+// --- The module under test ---------------------------------------------------------------------------------------
+const water=createWater({renderer});
+water.material.userData.setMood(q.get('mood')||'teal');
+const t0fill=performance.now();
+const terrain=createTerrain({scene,renderer,water});
+const initialFillMs=performance.now()-t0fill;
+const dressing=createDressing({scene,renderer,sunColor,sunDirection:sunDir});
+// Arches and boulders exactly where game.js puts them, drawn with the shared rock material.
+const archGeo=createArchGeometry();
+for(let n=0;n<3;n++){const d=685+n*740;const m=new THREE.Mesh(archGeo,terrain.rockMaterial);m.position.set(centerAt(d),-d*worldSlope,-d);scene.add(m);}
+const boulderGeo=createBoulderGeometry();
+const hash=(a,b=0)=>{const n=Math.sin(a*127.1+b*311.7)*43758.5453;return n-Math.floor(n);};
+for(let n=0;n<9;n++){
+ const d=300+n*240,x=centerAt(d)+(hash(n,3)-.5)*59,height=16+hash(n,5)*40,radius=3.1+hash(n,6)*2.4;
+ const m=new THREE.Mesh(boulderGeo,terrain.rockMaterial);m.position.set(x,height*.5-d*worldSlope,-d);m.scale.set(radius/2,height,radius/2);m.rotation.y=hash(n,7)*Math.PI;scene.add(m);
+}
+// Stand-in dragon: a 10 x 2 m capsule casting the shadow (plus shadow-only wing planes so the shadow has a wingspan).
+const standin=new THREE.Group();
+const body=new THREE.Mesh(new THREE.CapsuleGeometry(.9,8.2,4,12),new THREE.MeshStandardMaterial({color:0x2a2f2c,roughness:.6}));body.rotation.x=Math.PI/2;body.position.y=-.6;body.castShadow=true;standin.add(body);
+const wingGeo=new THREE.PlaneGeometry(9,3.5);
+for(const s of[-1,1]){const w=new THREE.Mesh(wingGeo,new THREE.MeshStandardMaterial({color:0x2a2f2c,side:THREE.DoubleSide,colorWrite:false,depthWrite:false}));w.position.set(s*5.5,-.9,-.5);w.rotation.x=-Math.PI/2;w.castShadow=true;standin.add(w);}
+scene.add(standin);
+const flight={distance:+(q.get('d')||300),x:0,alt:+(q.get('alt')||28),roll:+(q.get('roll')||0)};
+flight.x=centerAt(flight.distance)+(+(q.get('x')||0));
+// --- Composer: RenderPass + bloom + OutputPass -------------------------------------------------------------------
+const composer=new EffectComposer(renderer);
+const renderPass=new RenderPass(scene,camera);composer.addPass(renderPass);
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),.3,.6,1.0));
+composer.addPass(new OutputPass());
+// Scene-only draw calls: read renderer.info right after the RenderPass (the bloom passes add ~12 of their own).
+let sceneCalls=0,sceneTris=0;
+const origRender=renderPass.render.bind(renderPass);
+renderPass.render=(...a)=>{origRender(...a);sceneCalls=renderer.info.render.calls;sceneTris=renderer.info.render.triangles;};
+renderer.info.autoReset=false;
+const camPos=new THREE.Vector3();
+function placeCamera(){
+ const waterY=-flight.distance*worldSlope,h=waterY+flight.alt;
+ standin.position.set(flight.x,h,-flight.distance);standin.rotation.set(0,0,flight.roll);
+ // Rider eye: 1.4 m above the dragon's back line, 1.2 m behind its centre, pitched 0.24 rad down, rolled with the dragon.
+ camera.position.set(flight.x,h+1.4,-flight.distance+1.2);
+ const yaw=q.get('look')==='sun'?Math.atan2(-sunDir.x,-sunDir.z):0;
+ camera.quaternion.setFromEuler(new THREE.Euler(-.24,yaw,flight.roll,'YXZ'));
+ camera.getWorldPosition(camPos);
+ if(!skySystem){sun.position.copy(standin.position).addScaledVector(sunDir,120);sun.target.position.copy(standin.position);skyStandin.position.copy(camPos);}
+}
+// Waterfall placement list so a curtain fall can be framed on purpose (world-3-fall shot).
+const fallList=[];for(let n=0;n<9;n++){const p=fallPlacement(n);fallList.push(`${p.curtain?'CURTAIN':'sheet'}@${p.d.toFixed(0)}`);}
+const nextFall=fallPlacement(nextWaterfall(flight.distance));
+log('tier '+TIER+' | arch max radius '+archGeo.userData.maxRadius.toFixed(2)+' m | falls: '+fallList.join(' ')+` | next fall from d=${flight.distance}: n${nextFall.n} @${nextFall.d.toFixed(0)} ${nextFall.curtain?'curtain':'sheet'} side ${nextFall.side}`);
+let tPrev=performance.now(),time=0;window.__frames=0;window.__ready=false;window.__renderer=renderer;window.__terrain=terrain;window.__terrainMod=terrainMod;window.__centerAt=centerAt;window.__dressing=dressing;window.__water=water;
+window.__setFlight=(d,x=0,alt=28,roll=0)=>{flight.distance=d;flight.x=centerAt(d)+x;flight.alt=alt;flight.roll=roll;return 'ok';};
+await skyReady;// assign scene.environment before the first frame so nothing recompiles mid-run
+function status(){
+ const info=renderer.info;
+ return `tier ${TIER} | passes ${composer.passes.length} | scene calls ${sceneCalls} tris ${sceneTris} | total calls ${info.render.calls} tris ${info.render.triangles} | textures ${info.memory.textures} geoms ${info.memory.geometries} programs ${info.programs.length}\n`+
+  `fill avg ${terrain.stats.avgFillMs.toFixed(2)} ms over ${terrain.stats.fills} fills, worst single frame step ${terrain.stats.maxStepMs.toFixed(2)} ms over ${terrain.stats.steps} steps (initial 23 chunks ${initialFillMs.toFixed(0)} ms) | d ${flight.distance.toFixed(0)} alt ${flight.alt} roll ${flight.roll} ground ${terrainHeight(flight.x,flight.distance).toFixed(1)} | frames ${window.__frames}`;
+}
+function frame(now){
+ requestAnimationFrame(frame);
+ const dt=Math.min(.1,(now-tPrev)/1000);tPrev=now;time+=dt;
+ if(q.get('fly'))flight.distance+=dt*45;
+ terrain.update(flight.distance);water.update(time);dressing.update(time,flight);
+ placeCamera();
+ if(skySystem)skySystem.update(time,camPos,standin.position);
+ renderer.info.reset();
+ composer.render();
+ window.__frames++;window.__ready=true;
+ if(window.__frames%10===1){lines.length=Math.min(lines.length,2);log(status());}
+}
+addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight,false);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();composer.setSize(innerWidth,innerHeight);});
+requestAnimationFrame(frame);
+</script></body></html>

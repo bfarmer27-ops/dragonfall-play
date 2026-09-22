@@ -1,0 +1,23 @@
+Dragon flying
+Artist: NORBERTO-3D
+Artist page: https://sketchfab.com/norberto3d
+Source: https://sketchfab.com/3d-models/dragon-flying-78f809b98bbe426e94d4024dc894b206
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/
+
+The preserved norberto-dragon.glb file is the original downloaded model, with its
+embedded artist, source, license, six texture images and Object_0 animation intact.
+The source was confirmed against the public Sketchfab model API on 2026-09-20.
+
+Changes in Dragonfall's JavaScript adapter, not in the GLB:
+- Uniform scale and 180-degree heading rotation to match the game coordinates.
+- Original morph-target flight animation is retained.
+- Narrow-cave glide blends to the artist's original animation frame at 35/30
+  seconds, then blends back to the original flight clip after the cave.
+- Mouth, reins and wing-tip positions follow the animated mesh vertices.
+- The model's authored rider is hidden in first-person view to avoid covering
+  Dragonfall's rider camera. It remains visible in chase view.
+- Optional earned colors, horns and saddle decorations; the initial appearance
+  keeps the original dragon materials and has no added decorations.
+
+No endorsement by the artist is implied.

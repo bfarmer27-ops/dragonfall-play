@@ -1,0 +1,109 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Dragonfall terrain lab</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:100vh}#out{position:fixed;left:8px;top:8px;color:#9f9;font:12px monospace;white-space:pre}</style></head>
+<body><canvas id="c"></canvas><pre id="out"></pre>
+<script type="module">
+// Lab page for the terrain / water / dressing modules. Rider-view camera, HDRI sky + IBL, sun shadow, exp2 fog.
+// Query flags: ?tier=phone forces the phone tier, ?post=0 disables bloom, ?d=NNN sets the flown distance.
+import * as THREE from 'three';
+import {RGBELoader} from 'three/addons/loaders/RGBELoader.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+const params=new URLSearchParams(location.search);
+if(params.get('tier'))localStorage.setItem('dragonfall-graphics',params.get('tier'));
+const {TIER,BUDGET}=await import('../quality.js');
+const {centerAt}=await import('../flight.js');
+const {createRockMaterial,createTerrain,terrainHeight,worldSlope}=await import('../terrain.js');
+const {createWaterMaterial}=await import('../water.js');
+const {createDressing}=await import('../dressing.js');
+const out=document.getElementById('out');const log=s=>{out.textContent+=s+'\n';};
+const canvas=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:false,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,BUDGET[TIER].maxPixelRatio));renderer.setSize(innerWidth,innerHeight,false);
+renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.8;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene();
+// Warm sunset haze. sky.js will replace this with height fog + sun scattering; the materials only need scene.fog to exist.
+scene.fog=new THREE.FogExp2(0x8f8589,.0027);
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,.3,2500);
+// Sun: the HDR's brightest pixel is at azimuth 41.8 deg, elevation 3.9 deg in three's equirect frame (dir 0.743,0.067,0.665).
+// We spin the environment so the sun sits ahead-left of the rider (who flies toward -Z), then aim the light the same way.
+// applyAxisAngle(Y,a) maps azimuth phi -> phi-a, so spin = baseAzimuth - wantedAzimuth puts the sun where we want it.
+// The sky shader rotates the lookup by R_y(-spin) and scene.environmentRotation rotates the IBL lookup by R_y(angle), so it gets -spin.
+const baseSun=new THREE.Vector3(.743,.067,.665);
+const wantAzimuth=Math.atan2(-.94,-.34);// target dir (-.34, .067, -.94): ahead-left of the rider
+const spin=Math.atan2(baseSun.z,baseSun.x)-wantAzimuth;
+const skySunDir=baseSun.clone().applyAxisAngle(new THREE.Vector3(0,1,0),spin).normalize();
+// The light itself sits 14 degrees up (the HDR sun is only 3.9 degrees up) so the walls get shaped light, not a grazing sliver.
+const sunDir=new THREE.Vector3(skySunDir.x,0,skySunDir.z).normalize().multiplyScalar(Math.cos(14*Math.PI/180)).setY(Math.sin(14*Math.PI/180));
+scene.environmentRotation=new THREE.Euler(0,-spin,0);
+const sun=new THREE.DirectionalLight(0xffd9a8,3.2);sun.castShadow=true;sun.shadow.mapSize.set(BUDGET[TIER].shadowMap,BUDGET[TIER].shadowMap);
+Object.assign(sun.shadow.camera,{left:-18,right:18,top:18,bottom:-18,near:1,far:160});sun.shadow.bias=-.0004;sun.shadow.normalBias=.04;sun.shadow.camera.updateProjectionMatrix();
+scene.add(sun,sun.target);
+scene.add(new THREE.HemisphereLight(0xd8c7b8,0x1a2226,.35));
+// Sky sphere: samples the HDRI above the horizon only and fades to the fog colour below it (its ground is never shown).
+const skyMat=new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:{uSky:{value:null},uSpin:{value:spin},fogColor:{value:scene.fog.color},uSunDir:{value:sunDir}},
+ vertexShader:`varying vec3 vDir;void main(){vDir=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);gl_Position.z=gl_Position.w;}`,
+ fragmentShader:`varying vec3 vDir;uniform sampler2D uSky;uniform float uSpin;uniform vec3 fogColor;uniform vec3 uSunDir;
+  void main(){vec3 d=normalize(vDir);float c=cos(uSpin),s=sin(uSpin);vec3 r=vec3(c*d.x-s*d.z,d.y,s*d.x+c*d.z);
+   vec2 uv=vec2(atan(r.z,r.x)/6.2831853+.5,asin(clamp(r.y,-1.,1.))/3.14159265+.5);
+   vec3 col=texture2D(uSky,uv).rgb*.55;// the sky agent replaces this; dimmed here so the walls, not the sky, set the exposure
+   float horizon=smoothstep(.0,.16,d.y);col=mix(fogColor,col,horizon);
+   gl_FragColor=vec4(col,1.);
+   #include <tonemapping_fragment>
+   #include <colorspace_fragment>}`});
+const sky=new THREE.Mesh(new THREE.SphereGeometry(2000,40,24),skyMat);sky.frustumCulled=false;scene.add(sky);
+const rockMat=createRockMaterial(renderer);
+const waterMat=createWaterMaterial(renderer);
+const terrain=createTerrain(scene,rockMat,waterMat);
+const noiseTex=new THREE.TextureLoader().load('../assets/noise_512.png');noiseTex.wrapS=noiseTex.wrapT=THREE.RepeatWrapping;
+let dressing=null;
+// Stand-in dragon so the water shows a real cast shadow. The dragon agent replaces this with the true model.
+const standin=new THREE.Group();
+const bodyMat=new THREE.MeshStandardMaterial({color:0x2a2f2c,roughness:.6});
+const body=new THREE.Mesh(new THREE.CapsuleGeometry(1.1,7,4,10),bodyMat);body.rotation.x=Math.PI/2;body.castShadow=true;standin.add(body);
+// Wing planes only cast the shadow; they are hidden from the camera (the dragon agent supplies the real wings).
+const wingGeo=new THREE.PlaneGeometry(9,3.5);for(const s of[-1,1]){const w=new THREE.Mesh(wingGeo,new THREE.MeshStandardMaterial({color:0x2a2f2c,side:THREE.DoubleSide,roughness:.8}));w.position.set(s*5.5,-.9,-.5);w.rotation.x=-Math.PI/2;w.castShadow=true;w.material.colorWrite=false;w.material.depthWrite=false;standin.add(w);}
+scene.add(standin);
+const flight={distance:+(params.get('d')||420),x:0,alt:+(params.get('alt')||24),roll:+(params.get('roll')||0)};flight.x=centerAt(flight.distance)+(+(params.get('x')||0));
+const hdrName=BUDGET[TIER].textureSize==='2k'?'kiara_8_sunset_2k.hdr':'kiara_8_sunset_1k.hdr';
+new RGBELoader().load('../assets/'+hdrName,t=>{
+ t.mapping=THREE.EquirectangularReflectionMapping;
+ const pmrem=new THREE.PMREMGenerator(renderer);pmrem.compileEquirectangularShader();
+ scene.environment=pmrem.fromEquirectangular(t).texture;scene.environmentIntensity=.7;pmrem.dispose();
+ skyMat.uniforms.uSky.value=t;// the sky sphere keeps the raw equirect for a sharp sun disc
+ log('HDR '+hdrName+' tier '+TIER);
+},undefined,e=>log('HDR FAIL '+e));
+let composer=null;
+if(params.get('post')!=='0'&&BUDGET[TIER].bloom){
+ try{composer=new EffectComposer(renderer);composer.addPass(new RenderPass(scene,camera));
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),.25,.5,1.0));composer.addPass(new OutputPass());}
+ catch(e){log('post disabled: '+e.message);composer=null;}
+}
+function placeCamera(){
+ const h=flight.alt-flight.distance*worldSlope;
+ standin.position.set(flight.x,h,-flight.distance);standin.rotation.set(0,0,flight.roll);
+ // Rider eye: 2.3 m above the back, 3 m behind the shoulders, looking down the canyon.
+ camera.position.set(flight.x,h+2.3,-flight.distance+3.2);
+ camera.up.set(Math.sin(-flight.roll)*.9,Math.cos(flight.roll),0);
+ camera.lookAt(flight.x-Math.sin(flight.roll)*6,h+.6,-flight.distance-45);
+ sun.position.copy(standin.position).addScaledVector(sunDir,80);sun.target.position.copy(standin.position);
+ sky.position.copy(camera.position);
+}
+let t0=performance.now(),time=0;
+window.__setFlight=(d,x=0,alt=24,roll=0)=>{flight.distance=d;flight.x=centerAt(d)+x;flight.alt=alt;flight.roll=roll;terrain.update(d);return 'ok';};
+window.__ready=false;window.__renderer=renderer;// renderer.info gives draw calls / triangles for budget checks
+function frame(now){requestAnimationFrame(frame);const dt=Math.min(.1,(now-t0)/1000);t0=now;time+=dt;
+ if(!dressing){dressing=createDressing(scene,{noiseTexture:noiseTex});}
+ if(params.get('fly'))flight.distance+=dt*45;
+ terrain.update(flight.distance);dressing.update(time,flight);waterMat.userData.uniforms.uTime.value=time;
+ placeCamera();
+ if(composer)composer.render();else renderer.render(scene,camera);
+ window.__ready=true;
+}
+addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight,false);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();composer&&composer.setSize(innerWidth,innerHeight);});
+requestAnimationFrame(frame);
+log('tier '+TIER+' draw calls after first frame: see console');
+</script></body></html>

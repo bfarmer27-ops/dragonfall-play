@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script></head>
+<body style="margin:0;background:#000"><canvas id="c" width="640" height="360"></canvas><pre id="out"></pre>
+<script type="module">
+import * as THREE from 'three';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {GTAOPass} from 'three/addons/postprocessing/GTAOPass.js';
+import {SMAAPass} from 'three/addons/postprocessing/SMAAPass.js';
+import {BokehPass} from 'three/addons/postprocessing/BokehPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {RGBELoader} from 'three/addons/loaders/RGBELoader.js';
+import {Sky} from 'three/addons/objects/Sky.js';
+import {Lensflare} from 'three/addons/objects/Lensflare.js';
+const r=new THREE.WebGLRenderer({canvas:document.getElementById('c')});const s=new THREE.Scene(),cam=new THREE.PerspectiveCamera(60,16/9,.1,100);cam.position.z=3;
+s.add(new THREE.Mesh(new THREE.TorusKnotGeometry(.8,.3,128,32),new THREE.MeshPhysicalMaterial({color:0x88aa99,roughness:.3,clearcoat:1})));
+const comp=new EffectComposer(r);comp.addPass(new RenderPass(s,cam));comp.addPass(new GTAOPass(s,cam,640,360));comp.addPass(new UnrealBloomPass(new THREE.Vector2(640,360),.4,.5,.9));comp.addPass(new BokehPass(s,cam,{focus:3,aperture:.002,maxblur:.005}));comp.addPass(new SMAAPass(640,360));comp.addPass(new OutputPass());
+new RGBELoader().load('../assets/kiara_8_sunset_2k.hdr',t=>{t.mapping=THREE.EquirectangularReflectionMapping;s.environment=t;s.background=t;comp.render();document.getElementById('out').textContent='OK rev '+THREE.REVISION+' hdr '+t.image.width+'x'+t.image.height;window.__ok=true;},undefined,e=>{document.getElementById('out').textContent='HDR FAIL '+e;});
+comp.render();
+</script></body></html>

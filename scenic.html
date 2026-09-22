@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+ <meta name="theme-color" content="#092329"><meta name="description" content="A quiet Dragonfall flight: close behind your dragon, through stone arches and a glowing crystal hollow.">
+ <link rel="icon" href="data:,"><title>Dragonfall — Close Flight</title>
+ <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/"}}</script>
+ <link rel="stylesheet" href="./scenic.css">
+</head>
+<body>
+ <main id="scenic-game">
+  <canvas id="scenic-canvas" aria-label="Fly behind a dragon through a rocky canyon and crystal tunnel. Drag to steer."></canvas>
+  <header><a class="brand" href="./">DRAGONFALL <span>CLOSE FLIGHT</span></a><button id="pause" hidden aria-label="Pause flight">Pause</button></header>
+  <section id="welcome" class="overlay" aria-labelledby="title">
+   <div class="intro"><p class="eyebrow">A QUIETER WAY TO FLY</p><h1 id="title">Stay close.<br>Just fly.</h1><p id="welcome-copy">Dark stone. Still water.<br>A hidden world of light.</p><button id="start" disabled>Loading dragon…</button><p class="hint">Drag to steer · or use the arrow keys</p></div>
+  </section>
+  <section id="pause-panel" class="overlay" hidden aria-labelledby="pause-title"><div class="intro"><p class="eyebrow">CLOSE FLIGHT</p><h1 id="pause-title">A moment<br>to breathe.</h1><button id="resume">Keep flying</button><button id="restart" class="secondary">Start again</button></div></section>
+  <footer><div><span id="region">THE STONE PASS</span><div class="progress-track"><i id="progress"></i></div></div><span id="steer-hint">DRAG TO STEER</span></footer>
+  <div id="joystick" hidden><i></i></div>
+  <details id="credits"><summary>Credits</summary><p>Dragon flying by <a href="https://sketchfab.com/3d-models/dragon-flying-78f809b98bbe426e94d4024dc894b206" target="_blank" rel="noopener">NORBERTO-3D</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Original model and flight animation; adapted scale and camera. Cliff textures and sky lighting: <a href="https://polyhaven.com/" target="_blank" rel="noopener">Poly Haven</a>, CC0. Scene and crystal geometry: Dragonfall.</p></details>
+  <p id="error" role="alert" hidden></p>
+ </main>
+ <script type="module" src="./private-access.js?v=1"></script>
+</body>
+</html>

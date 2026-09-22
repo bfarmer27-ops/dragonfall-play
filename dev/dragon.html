@@ -1,0 +1,145 @@
+<!doctype html><html><head><meta charset="utf-8"><title>dragon module - rider POV</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas><pre id="out" style="position:fixed;left:8px;top:8px;color:#8f8;font:12px monospace;margin:0;text-shadow:0 0 3px #000"></pre>
+<script type="module">
+// Dev page for dist/dragon.js + dist/rider.js, rendered from the saddle.
+// ?tier=high|phone  ?input=l,r (wing inputs, e.g. 1,-1 = hard right bank)  ?genre=grey|black|green
+// ?sun=behind (sun low ahead and below the wings so the membranes glow)  ?freeze=<phase> (hold the wingbeat)
+// ?turn=1 (body yaws/pitches in a slow S so the head-leads / neck-follows / tail-lags chain shows)  ?view=orbit
+import * as THREE from 'three';
+import {RGBELoader} from 'three/addons/loaders/RGBELoader.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {BokehPass} from 'three/addons/postprocessing/BokehPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {setTier} from '../quality.js';
+const q=new URLSearchParams(location.search);
+const tier=setTier(q.get('tier')==='phone'?'phone':'high');
+const {createDragon}=await import('../dragon.js');
+const {createRider}=await import('../rider.js');
+const {wingbeatPose}=await import('../wingbeat.js');
+const out=document.getElementById('out');
+const [inL,inR]=(q.get('input')||'0,0').split(',').map(Number);
+const genre=q.get('genre')||'grey';
+const sunBehind=q.get('sun')==='behind';
+const freeze=q.has('freeze')?Number(q.get('freeze')):null;
+const orbit=q.get('view')==='orbit';   // diagnostic third-person view of the saddle rig
+const turn=q.get('turn')==='1';
+const handsView=q.get('view')==='hands';   // diagnostic close-up of the right fist from the eye
+const W=innerWidth,H=innerHeight;
+
+const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:false});
+renderer.setSize(W,H,false);renderer.setPixelRatio(1);renderer.info.autoReset=false;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.82;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=tier==='high'?THREE.PCFSoftShadowMap:THREE.PCFShadowMap;
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x56697a,.0030);   // stand-in until sky.js owns the fog
+const camera=new THREE.PerspectiveCamera(H>W?74:56,W/H,.1,2200);
+
+// ---- lighting per contract 3: one sun, one hemisphere fill, HDRI image-based light
+const sunDir=sunBehind?new THREE.Vector3(0.10,-0.30,-0.95).normalize():new THREE.Vector3(-0.18,0.40,-0.90).normalize();
+const sunColor=new THREE.Color(0xffd7a8);
+const sun=new THREE.DirectionalLight(sunColor,3.2);
+sun.castShadow=true;
+sun.shadow.mapSize.set(tier==='high'?2048:1024,tier==='high'?2048:1024);
+Object.assign(sun.shadow.camera,{left:-24,right:24,top:24,bottom:-24,near:1,far:260});
+sun.shadow.bias=-.0003;sun.shadow.normalBias=.04;sun.shadow.camera.updateProjectionMatrix();
+scene.add(sun,sun.target);
+scene.add(new THREE.HemisphereLight(0x6f8aa0,0x2a2118,.25));
+let hdrReady=false;
+new RGBELoader().load('../assets/kiara_8_sunset_1k.hdr',t=>{
+ t.mapping=THREE.EquirectangularReflectionMapping;
+ const pm=new THREE.PMREMGenerator(renderer);
+ scene.environment=pm.fromEquirectangular(t).texture;
+ scene.environmentIntensity=.6;
+ scene.background=null;
+ pm.dispose();t.dispose();hdrReady=true;
+},undefined,e=>{console.warn('HDR load failed',e);});
+
+// ---- stand-in canyon: two cliff walls, dark water, dark sky sphere
+const loader=new THREE.TextureLoader();
+const cliffTex=loader.load('../assets/cliff_side_diff_1k.jpg');cliffTex.colorSpace=THREE.SRGBColorSpace;cliffTex.wrapS=cliffTex.wrapT=THREE.RepeatWrapping;cliffTex.repeat.set(8,2.5);
+const cliffNor=loader.load('../assets/cliff_side_nor_gl_1k.jpg');cliffNor.wrapS=cliffNor.wrapT=THREE.RepeatWrapping;cliffNor.repeat.set(8,2.5);
+const cliffMat=new THREE.MeshStandardMaterial({map:cliffTex,normalMap:cliffNor,roughness:.95,color:0x6e6258});
+for(const side of [-1,1]){
+ const wall=new THREE.Mesh(new THREE.PlaneGeometry(1400,320,1,1),cliffMat);
+ wall.position.set(side*70,90,-400);
+ wall.rotation.y=-side*Math.PI/2+side*.06;
+ scene.add(wall);
+}
+const water=new THREE.Mesh(new THREE.PlaneGeometry(600,1600),new THREE.MeshPhysicalMaterial({color:0x0b3f46,roughness:.25,metalness:0,clearcoat:1,clearcoatRoughness:.15}));
+water.rotation.x=-Math.PI/2;water.position.set(0,-28,-500);water.receiveShadow=true;scene.add(water);
+const skyDome=new THREE.Mesh(new THREE.SphereGeometry(2000,24,12),new THREE.MeshBasicMaterial({color:0x3e4a56,side:THREE.BackSide,fog:false}));
+scene.add(skyDome);
+
+// ---- dragon + rider
+const model=createDragon(renderer);
+const {dragon,saddleAnchor,headAnchor,bridleAnchors}=model;
+scene.add(dragon);
+model.setSun(sunDir,sunColor);
+const genreColor={grey:0x5a6a5c,black:0x1c1e1f,green:0x3f5a3a}[genre]||0x5a6a5c;
+model.materials.skin.color.set(genreColor);
+const rider=createRider({saddleAnchor,bridleAnchors});
+rider.setReinColor(genre==='black'?'blue':genre==='green'?'orange':'leather');
+if(orbit||handsView){scene.add(camera);}else rider.eye.add(camera);
+if(handsView)camera.fov=26;
+
+// ---- post: RenderPass -> Bokeh (high) -> Bloom -> Output
+const composer=new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene,camera));
+let bokeh=null;
+if(tier==='high'&&!orbit){bokeh=new BokehPass(scene,camera,{focus:12,aperture:.0006,maxblur:.006});composer.addPass(bokeh);}
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(W,H),.3,.6,1.0));
+composer.addPass(new OutputPass());
+
+const fake={pitch:0,roll:0,yaw:0,speed:61,vx:0,alt:0,distance:0};
+const headPos=new THREE.Vector3(),camPos=new THREE.Vector3();
+let phase=freeze!==null?freeze:0,last=performance.now(),start=last;
+window.__frames=0;
+function frame(now){
+ requestAnimationFrame(frame);
+ const dt=Math.min(.05,(now-last)/1000);last=now;
+ const t=(now-start)/1000;
+ const pose=wingbeatPose(phase,0,35);
+ if(freeze===null)phase+=dt*Math.PI*2*pose.frequency;
+ fake.roll=Math.sin(t*.6)*.3;
+ if(turn){fake.yaw=Math.sin(t*.5)*.35;fake.pitch=Math.sin(t*.8)*.12;}
+ dragon.position.set(0,pose.body*1.6,0);
+ dragon.rotation.set(fake.pitch,fake.yaw,fake.roll,'YXZ');
+ model.update(pose,fake,inL,inR,t);
+ // rider.update() takes the RAW thumb positions (+1 = thumb slid up = that fist pushes forward, -1 = slid down = that
+ // fist pulls the rein back). ?input= here is the wing COMMAND (+1 = climb), which the game derives from the thumbs
+ // with its default invert, so the thumbs are the negated command.
+ rider.update(-inL,-inR,fake,dt);
+ sun.position.copy(dragon.position).addScaledVector(sunDir,120);
+ sun.target.position.copy(dragon.position);
+ dragon.updateMatrixWorld(true);
+ camera.getWorldPosition(camPos);headAnchor.getWorldPosition(headPos);
+ const headDist=camPos.distanceTo(headPos);
+ if(bokeh)bokeh.uniforms.focus.value=headDist;
+ if(orbit){camera.position.set(5,4.5,4.5);camera.lookAt(0,1.6,-2);}
+ if(handsView){rider.eye.getWorldPosition(camera.position);const hp=new THREE.Vector3();rider.hands[1].getWorldPosition(hp);camera.lookAt(hp);}
+ renderer.info.reset();
+ composer.render();
+ window.__frames++;
+ if(window.__frames%5===1){
+  const info=renderer.info.render;
+  const span=model.wingTip(0,pose).distanceTo(model.wingTip(1,pose));
+  out.textContent=`tier=${tier} genre=${genre} sun=${sunBehind?'behind':'ahead'} input=${inL},${inR} passes=${composer.passes.length} calls=${info.calls} tris=${info.triangles} head=${headDist.toFixed(1)}m span=${span.toFixed(1)}m hdr=${hdrReady} frames=${window.__frames} headLead=${(model.follow.head.yaw*57.3).toFixed(1)}deg tailLag=${(model.follow.tail[8].yaw*57.3).toFixed(1)}deg`;
+ }
+}
+requestAnimationFrame(frame);
+// Diagnostics for snap.mjs: where is the skinned body top under the saddle vs the saddle anchor?
+window.__follow=()=>JSON.stringify({rate:model.follow.rate,head:model.follow.head,neckYaw:model.follow.neck.map(n=>+n.yaw.toFixed(3)),tailYaw:model.follow.tail.map(n=>+n.yaw.toFixed(3)),fakeYaw:fake.yaw});
+window.__dbg=()=>{
+ const body=dragon.children.find(c=>c.isSkinnedMesh);
+ const pos=body.geometry.attributes.position,v=new THREE.Vector3();
+ function top(z0,z1){let t=-1e9,tl=-1e9,n=0;for(let i=0;i<pos.count;i++){if(Math.abs(pos.getX(i))<.15&&pos.getZ(i)>z0&&pos.getZ(i)<z1){n++;tl=Math.max(tl,pos.getY(i));body.getVertexPosition(i,v);body.localToWorld(v);t=Math.max(t,v.y);}}return [n,tl,t];}
+ const a=new THREE.Vector3();saddleAnchor.getWorldPosition(a);
+ const pommel=new THREE.Vector3(0,.14,-.85);saddleAnchor.localToWorld(pommel);
+ const strap=new THREE.Vector3(0,(.92-.79)*1.6,(-.4-.55)*1.6);saddleAnchor.localToWorld(strap);
+ return {seat:top(.4,.7),pommelZone:top(-.1,.15),strapZone:top(-.5,-.3),anchorWorld:a.toArray(),pommelWorld:pommel.toArray(),strapTopWorld:strap.toArray(),dragonPos:dragon.position.toArray(),anchorLocal:saddleAnchor.position.toArray()};
+};</script></body></html>

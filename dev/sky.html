@@ -1,0 +1,143 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Dragonfall sky module proof</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}#out{position:fixed;left:8px;top:8px;color:#9f9;font:12px monospace;white-space:pre;pointer-events:none;text-shadow:0 0 3px #000}</style>
+</head><body><canvas id="c"></canvas><pre id="out"></pre>
+<script type="module">
+// Proof page for dist/sky.js: a stand-in canyon (two textured walls, dark water), a chrome sphere for the
+// PMREM, a capsule for the shadow, the sky dome, the cloud ceiling and the global height fog.
+// Query: ?tier=phone|high  ?density=0.0045  ?look=ahead|sun|down  ?falloff=0.06  ?start=12
+import {setTier} from '../quality.js';
+const q = new URLSearchParams(location.search);
+const tier = setTier(q.get('tier') === 'phone' ? 'phone' : 'high');
+// sky.js must be imported before any material compiles (it rewrites the fog shader chunks at import).
+const sky = await import('../sky.js');
+const THREE = await import('three');
+const {EffectComposer} = await import('three/addons/postprocessing/EffectComposer.js');
+const {RenderPass} = await import('three/addons/postprocessing/RenderPass.js');
+const {UnrealBloomPass} = await import('three/addons/postprocessing/UnrealBloomPass.js');
+const {OutputPass} = await import('three/addons/postprocessing/OutputPass.js');
+
+const out = document.getElementById('out');
+const log = s => { out.textContent += s + '\n'; };
+if (q.get('density')) sky.fogUniforms.fogDensity.value = parseFloat(q.get('density'));
+if (q.get('falloff') || q.get('start')) sky.setFogConstants({
+ falloff: q.get('falloff') ? parseFloat(q.get('falloff')) : undefined,
+ start: q.get('start') ? parseFloat(q.get('start')) : undefined,
+});
+
+const W = innerWidth, H = innerHeight;
+const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('c'), antialias: false, powerPreference: 'high-performance'});
+renderer.setPixelRatio(1);
+renderer.setSize(W, H, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.82;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(56, W / H, 0.3, 2400);
+camera.position.set(0, 25, 0);
+const look = q.get('look') || 'ahead';
+if (look === 'sun') {
+ // Yaw toward the sun (its azimuth is 11.3 degrees left of -Z), same pitch as the ahead view.
+ camera.rotation.set(0, 0, 0, 'YXZ');
+ camera.rotation.y = Math.atan2(-sky.SUN_DIRECTION.x, -sky.SUN_DIRECTION.z);
+ camera.rotation.x = 0.04;   // sun (23.6 deg up) sits in the upper third of the frame
+} else if (look === 'down') {
+ camera.rotation.set(-0.7, 0, 0, 'YXZ');
+} else if (look === 'level') {
+ camera.rotation.set(-0.08, 0, 0, 'YXZ');   // the rider's real pitch over the neck
+} else if (look === 'up') {
+ camera.rotation.set(0.22, 0, 0, 'YXZ');
+} else {
+ camera.rotation.set(-0.24, 0, 0, 'YXZ');
+}
+
+// ---- The module under test ----
+const skySystem = sky.createSky({renderer, scene});
+
+// ---- Stand-in canyon: two long walls 70 m either side, plain MeshStandardMaterial with NO custom code ----
+const texLoader = new THREE.TextureLoader();
+function tex(name, srgb) {
+ const t = texLoader.load(`../assets/cliff_side_${name}_1k.jpg`);
+ t.wrapS = t.wrapT = THREE.RepeatWrapping;
+ t.repeat.set(14, 3);
+ if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+ t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+ return t;
+}
+const wallMat = new THREE.MeshStandardMaterial({map: tex('diff', true), normalMap: tex('nor_gl', false), roughness: 0.95, metalness: 0});
+const wallGeo = new THREE.PlaneGeometry(1400, 140, 1, 1);   // real canyon rims are ~100-150 m
+for (const side of [-1, 1]) {
+ const wall = new THREE.Mesh(wallGeo, wallMat);
+ wall.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+ // Wall bottom at the water, top 140 m up; the world slopes down 0.04/m ahead so tilt the wall to match.
+ wall.rotation.x = 0;
+ wall.position.set(side * 70, 70 - 600 * 0.04, -600);
+ wall.rotation.order = 'YXZ';
+ wall.rotation.z = side > 0 ? -Math.atan(0.04) : Math.atan(0.04);
+ scene.add(wall);
+}
+// Dark teal water: receives the capsule shadow and reflects the PMREM sky (the real water.js replaces this).
+// envMapIntensity is held low so the flat plane does not turn into a white mirror of the HDRI and hide the shadows.
+const waterMat = new THREE.MeshStandardMaterial({color: 0x07242a, roughness: 0.75, metalness: 0, envMapIntensity: 0.18});
+const water = new THREE.Mesh(new THREE.PlaneGeometry(400, 1600, 1, 1), waterMat);
+water.rotation.x = -Math.PI / 2 + Math.atan(0.04);   // slopes down toward -Z like the real river
+water.position.set(0, -600 * 0.04, -600);
+water.receiveShadow = true;
+scene.add(water);
+// Chrome sphere 8 m ahead: proves the PMREM (sunset reflection, hot spot on the sun side).
+const chrome = new THREE.Mesh(new THREE.SphereGeometry(1.2, 48, 32), new THREE.MeshStandardMaterial({color: 0xffffff, metalness: 1, roughness: 0.05}));
+chrome.position.set(2.2, 22.6, -8);
+chrome.castShadow = true;
+scene.add(chrome);
+// Capsule 46 m ahead, 4 m over the water: proves the shadow map. The camera sits 25 m up pitched -0.24 rad,
+// so its bottom edge is 42 degrees below level; 21 m down over 46 m ahead = 25 degrees, inside the frame.
+// A pale sandbar at the water line receives the shadows: the near-black stand-in water (albedo ~0.02
+// linear) cannot show a shadow, because taking the direct light away from black changes nothing.
+const bar = new THREE.Mesh(new THREE.BoxGeometry(36, 1.0, 44), new THREE.MeshStandardMaterial({color: 0x9a8f78, roughness: 0.9}));
+bar.position.set(0, -40 * 0.04 + 0.4, -40);   // water at z=-40 sits at y=-1.6; bar top at y=-1.1
+bar.receiveShadow = true;
+scene.add(bar);
+const capsule = new THREE.Mesh(new THREE.CapsuleGeometry(1.2, 4.0, 8, 20), new THREE.MeshStandardMaterial({color: 0x8a7f6a, roughness: 0.6}));
+capsule.position.set(-4, 2.2, -46);            // standing on the bar
+capsule.castShadow = capsule.receiveShadow = true;
+scene.add(capsule);
+// A tall post nearer the camera so a second shadow reads at the rider's scale (33 degrees down, in frame).
+const post = new THREE.Mesh(new THREE.BoxGeometry(0.8, 8, 0.8), new THREE.MeshStandardMaterial({color: 0x5a4a3a, roughness: 0.8}));
+post.position.set(6, 2.9, -34);
+post.castShadow = true;
+scene.add(post);
+
+// ---- Minimal composer like the real game: RenderPass -> bloom -> OutputPass ----
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(W, H), 0.3, 0.6, 1.0));
+composer.addPass(new OutputPass());
+
+const clock = new THREE.Clock();
+let frames = 0;
+window.__frames = 0;
+const camPos = new THREE.Vector3();
+const anchor = new THREE.Vector3(0, 6, -40);   // shadow box (+/-24 m) centred between the capsule and the post
+// three resets renderer.info before every render() call; the composer makes several per frame, so the
+// counter would only ever show the last fullscreen quad. Reset it once per frame by hand instead.
+renderer.info.autoReset = false;
+function frame() {
+ requestAnimationFrame(frame);
+ const t = clock.getElapsedTime();
+ camera.getWorldPosition(camPos);
+ skySystem.update(t, camPos, anchor);
+ renderer.info.reset();
+ composer.render();
+ frames++;
+ window.__frames = frames;
+ if (frames === 3 || frames % 15 === 0) {
+  const i = skySystem.info, r = renderer.info.render;
+  out.textContent = `tier=${tier} ${W}x${H} look=${look} passes=${composer.passes.length} calls=${r.calls} tris=${r.triangles}\n` +
+   `hdr ${i.hdrSize || 'loading'} sun elev ${i.sunElevDeg.toFixed(1)}deg yaw ${i.yawDeg.toFixed(0)}deg cloud octaves ${i.cloudOctaves}\n` +
+   `fog density ${sky.fogUniforms.fogDensity.value} colour #${sky.fogUniforms.fogColor.value.getHexString()} env ${scene.environment ? 'pmrem' : 'none'} envInt ${scene.environmentIntensity}`;
+ }
+}
+window.__skySystem = skySystem;
+skySystem.ready.then(() => { window.__hdr = true; });
+frame();
+</script></body></html>

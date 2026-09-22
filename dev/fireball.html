@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js","three/addons/":"../vendor/addons/"}}</script></head>
+<body style="margin:0;background:#000"><canvas id="c" width="1280" height="720"></canvas><pre id="out" style="position:fixed;top:0;left:0;color:#8f8;font:12px monospace"></pre>
+<script type="module">
+import * as THREE from 'three';
+import {createFireballs} from '../fireball.js';
+const r=new THREE.WebGLRenderer({canvas:document.getElementById('c')});r.toneMapping=THREE.ACESFilmicToneMapping;r.outputColorSpace=THREE.SRGBColorSpace;
+const s=new THREE.Scene();s.background=new THREE.Color(0x203040);s.fog=new THREE.FogExp2(0x203040,.01);
+const cam=new THREE.PerspectiveCamera(65,16/9,.1,500);cam.position.set(0,6,18);cam.lookAt(0,4,-30);
+s.add(new THREE.HemisphereLight(0x88aacc,0x223322,.8));const wall=new THREE.Mesh(new THREE.BoxGeometry(60,40,4),new THREE.MeshStandardMaterial({color:0x775544,roughness:.9}));wall.position.set(0,10,-60);s.add(wall);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:0x224455}));ground.rotation.x=-Math.PI/2;s.add(ground);
+const fb=createFireballs({scene:s,onExplode:(p,k)=>{log.push(k+'@'+p.z.toFixed(0));}});const log=[];
+fb.fire({origin:new THREE.Vector3(-3,5,0),direction:new THREE.Vector3(0,.05,-1),speed:60});
+setTimeout(()=>fb.fire({origin:new THREE.Vector3(3,5,0),direction:new THREE.Vector3(.1,.1,-1),speed:60}),400);
+let last=performance.now(),frames=0;
+function tick(){const t=performance.now(),dt=Math.min(.05,(t-last)/1000);last=t;fb.update(dt,(p)=>p.z<-58?'rock':null);r.render(s,cam);frames++;window.__frames=frames;document.getElementById('out').textContent='frames '+frames+' live '+fb.live.length+' bursts '+log.join(',');requestAnimationFrame(tick);}tick();
+</script></body></html>
