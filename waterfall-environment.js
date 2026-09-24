@@ -1,27 +1,30 @@
 // Emerald Falls: finite, stationary scenery for the manually flown two-thumb course.
 // Textures are CC0 photographs. World-space sampling keeps steep cliffs crisp.
 import * as THREE from './vendor/three.module.js';
-import {routeAt, FALL_START, FALL_END, ROUTE_LENGTH} from './waterfall-core.js';
+import {routeAt, FALL_START, FALL_END, ARC_RADIUS, ROUTE_LENGTH} from './waterfall-core.js';
 
 const clamp = THREE.MathUtils.clamp;
 const smooth = (a,b,x) => {const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
 const hash = (x,z=0) => {const v=Math.sin(x*127.1+z*311.7)*43758.5453;return v-Math.floor(v);};
 function noise(x,z){const ix=Math.floor(x),iz=Math.floor(z),u=smooth(0,1,x-ix),v=smooth(0,1,z-iz);return THREE.MathUtils.lerp(THREE.MathUtils.lerp(hash(ix,iz),hash(ix+1,iz),u),THREE.MathUtils.lerp(hash(ix,iz+1),hash(ix+1,iz+1),u),v);}
-const uphill = Array.from({length:Math.ceil(FALL_START/5)+1},(_,i)=>routeAt(Math.min(FALL_START,i*5)));
 const lip=routeAt(FALL_START),exit=routeAt(FALL_END);
 const WORLD_END_Z=routeAt(ROUTE_LENGTH).z-400;
 export const WATERFALL_RIVER_CLEARANCE=120;
+// Water rounds the same lip and drops beside the straight flight corridor.
+// The 60 m separation clears the full ring plus the animated dragon's body.
+const riverBendRadius=ARC_RADIUS-60,curtainZ=lip.z-riverBendRadius;
+const upperWaterY=lip.y-WATERFALL_RIVER_CLEARANCE,lowerWaterY=exit.y-WATERFALL_RIVER_CLEARANCE;
+const curtainTopY=upperWaterY-riverBendRadius;
 export function valleyProfile(z){
- if(z>=0)return {x:0,y:42-WATERFALL_RIVER_CLEARANCE};
- if(z<lip.z){return {x:0,y:THREE.MathUtils.lerp(lip.y-WATERFALL_RIVER_CLEARANCE,exit.y-WATERFALL_RIVER_CLEARANCE,smooth(-lip.z+8,-lip.z+42,-z))};}
- let lo=0,hi=uphill.length-1;
- while(hi-lo>1){const m=(lo+hi)>>1;if(uphill[m].z>z)lo=m;else hi=m;}
- const a=uphill[lo],b=uphill[hi],t=clamp((z-a.z)/(b.z-a.z),0,1);
- return {x:THREE.MathUtils.lerp(a.x,b.x,t),y:THREE.MathUtils.lerp(a.y,b.y,t)-WATERFALL_RIVER_CLEARANCE};
+ if(z>=lip.z)return {x:0,y:upperWaterY};
+ if(z>=curtainZ){const forward=lip.z-z;return {x:0,y:curtainTopY+Math.sqrt(Math.max(0,riverBendRadius**2-forward**2))};}
+ return {x:0,y:lowerWaterY};
 }
 export function riverWidth(z){return 64+35*Math.exp(-(((z-exit.z)/240)**2))+7*Math.sin(z*.004)**2;}
 export function waterfallGroundHeight(x,z){
- const p=valleyProfile(z),a=Math.abs(x-p.x),w=riverWidth(z);
+ // The last raised terrain row belongs behind the water plane. A raised row
+ // on its front edge makes a sloping rock triangle hide the whole curtain.
+ const p=z<=curtainZ?{x:0,y:lowerWaterY}:valleyProfile(z),a=Math.abs(x-p.x),w=riverWidth(z);
  if(a<w)return p.y-8+3*noise(x*.04,z*.04);
  const q=a-w;
  const bank=4+10*noise(x*.025,z*.025);
@@ -96,26 +99,26 @@ export function createWaterfallEnvironment({group,renderer}){
    diffuseColor.rgb*=mix(vec3(.012,.12,.16),vec3(.025,.35,.31),waterVariation*.65+wave*.08)+vec3(.22,.36,.32)*current;
   `);
  };riverMat.customProgramCacheKey=()=> 'emerald-river-v1';
- // A continuous winding river rises with the upper valley and continues below the falls.
- for(const [start,end] of [[400,lip.z-24],[lip.z-43,WORLD_END_Z]]){
+ // Separate grids meet exactly at the level lip and at the waterfall's foot.
+ for(const [start,end] of [[400,lip.z],[lip.z,curtainZ],[curtainZ,WORLD_END_Z]]){
   const n=Math.ceil((start-end)/9),pos=[],uv=[],indices=[];
-  for(let j=0;j<=n;j++){const z=THREE.MathUtils.lerp(start,end,j/n),p=valleyProfile(z),w=riverWidth(z);if(start===400&&z<lip.z)p.y=lip.y-WATERFALL_RIVER_CLEARANCE;for(const side of [-1,1]){pos.push(p.x+side*w,p.y,z);uv.push((side+1)/2,j/n);}}
+  for(let j=0;j<=n;j++){const z=THREE.MathUtils.lerp(start,end,j/n),p=valleyProfile(z),w=riverWidth(z);if(start===curtainZ)p.y=lowerWaterY;for(const side of [-1,1]){pos.push(p.x+side*w,p.y,z);uv.push((side+1)/2,j/n);}}
   for(let j=0;j<n;j++){const a=j*2;indices.push(a,a+1,a+2,a+1,a+3,a+2);}
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geo.setIndex(indices);geo.computeVertexNormals();mesh(geo,riverMat,'stationary-river');
   surfaces.push({positions:geo.attributes.position,columns:2,rows:n,start,end});
  }
  // Fixed waterfall ribbons, with bright streaks and gaps exposing the rock wall.
  const fallMat=new THREE.ShaderMaterial({side:THREE.DoubleSide,transparent:true,depthWrite:false,uniforms:{uNoise:{value:fallNoise}},vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',fragmentShader:`varying vec2 vUv;uniform sampler2D uNoise;void main(){float broad=texture2D(uNoise,vec2(vUv.x*1.8,vUv.y*.5)).r;float fine=texture2D(uNoise,vec2(vUv.x*15.+broad*.4,vUv.y*3.5)).r;float n=clamp(broad*.55+fine*.65,0.,1.);float edge=smoothstep(0.,.08,vUv.x)*smoothstep(0.,.08,1.-vUv.x);vec3 c=mix(vec3(.21,.52,.53),vec3(.95,1.,.98),smoothstep(.25,.78,n));gl_FragColor=vec4(c,edge*(.55+n*.4));\n#include <tonemapping_fragment>\n#include <colorspace_fragment>}`});materials.push(fallMat);
- const h=lip.y-exit.y;
- const curtain=mesh(new THREE.PlaneGeometry(106,h,1,1),fallMat,'waterfall-curtain');curtain.position.set(0,(lip.y+exit.y)/2-WATERFALL_RIVER_CLEARANCE,lip.z-24);
+ const h=curtainTopY-lowerWaterY;
+ const curtain=mesh(new THREE.PlaneGeometry(106,h,1,1),fallMat,'waterfall-curtain');curtain.position.set(0,(curtainTopY+lowerWaterY)/2,curtainZ);
  // Broken foam patches mark the foot of the fall without resembling checkpoints.
  const foamMat=new THREE.ShaderMaterial({transparent:true,depthWrite:false,uniforms:{foamNoise:{value:fallNoise}},vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',fragmentShader:`varying vec2 vUv;uniform sampler2D foamNoise;void main(){vec2 p=(vUv-.5)*vec2(1.4,2.);float n=texture2D(foamNoise,vUv*3.5).r;float edge=1.-smoothstep(.3,.85,length(p)+n*.2);float a=edge*smoothstep(.38,.72,n)*.52;gl_FragColor=vec4(.78,.94,.88,a);\n#include <tonemapping_fragment>\n#include <colorspace_fragment>}`});materials.push(foamMat);
- const foam=mesh(new THREE.PlaneGeometry(154,130),foamMat,'pool-foam');foam.rotation.x=-Math.PI/2;foam.position.set(0,exit.y-WATERFALL_RIVER_CLEARANCE+.2,lip.z-100);
+ const foam=mesh(new THREE.PlaneGeometry(154,130),foamMat,'pool-foam');foam.rotation.x=-Math.PI/2;foam.position.set(0,lowerWaterY+.2,curtainZ-70);
  // Forest rendered in batches, keeping the route clear and phone draw calls low.
  const batches=Array.from({length:20},()=>[]),dummy=new THREE.Object3D();let treeCount=0;
  for(let i=0;i<850;i++){
   const z=300-hash(i,33)*(300-WORLD_END_Z),p=valleyProfile(z),side=i%2?1:-1,x=p.x+side*(115+hash(i,14)*720),y=waterfallGroundHeight(x,z);
-  if(z<lip.z+35&&z>lip.z-70)continue;
+  if(z<lip.z+35&&z>curtainZ-70)continue;
   const slope=Math.abs(waterfallGroundHeight(x+3,z)-y)+Math.abs(waterfallGroundHeight(x,z+3)-y);if(slope>10)continue;
   const size=8+hash(i,8)*15;batches[Math.min(19,Math.floor((300-z)/(300-WORLD_END_Z)*20))].push({x,y,z,size,seed:i});treeCount++;
  }
@@ -141,9 +144,9 @@ export function createWaterfallEnvironment({group,renderer}){
  });
  // Recognisable landmarks: pale stone arches at the approach, crest and exit.
  const stone=new THREE.MeshStandardMaterial({map:maps.cliffColor.value,normalMap:maps.cliffNormal.value,color:0xcbd1b0,roughness:.85});materials.push(stone);
- for(const d of [390,FALL_START-200,FALL_END+420]){
+ for(const d of [150,FALL_START-140,FALL_END+420]){
   const p=routeAt(d),points=[];for(let i=0;i<=32;i++){const a=Math.PI*i/32;points.push(new THREE.Vector3(Math.cos(a)*86,Math.sin(a)*105-32,0));}
-  const g=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),48,6.5,8,false),m=mesh(g,stone,'landmark-stone-arch');m.position.set(p.x,p.y,p.z);
+  const g=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),48,6.5,8,false),m=mesh(g,stone,'landmark-stone-arch');m.position.set(p.x,p.y,p.z);m.userData.routeDistance=d;
  }
  const ready=Promise.all(pending).then(()=>{group.userData.assetsReady=true;});
  // Attach an error handler now; start() still awaits the rejecting promise.

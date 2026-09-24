@@ -4,11 +4,11 @@
  <base href="../">
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#07171b"><meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="description" content="Dragonfall Waterfall Map: a large two-thumb flight route with a rising circle and 90-degree waterfall descent.">
+  <meta name="description" content="Dragonfall Waterfall Map: a level two-thumb approach and smooth, manually controlled waterfall descent.">
   <link rel="icon" href="data:,">
   <title>Dragonfall — Waterfall Map · Two Thumb</title>
-  <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/","./waterfall-core.js":"./waterfall-core.js?v=7","./flight.js":"./flight.js?v=15","./dragon-norberto.js":"./dragon-norberto.js?v=3","./net.js":"./net.js?v=12","./render.js":"./render.js?v=11","./terrain.js":"./terrain.js?v=11","./sky.js":"./sky.js?v=11"}}</script>
-  <link rel="stylesheet" href="./style.css?v=10">
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/","./waterfall-core.js":"./waterfall-core.js?v=8","./flight.js":"./flight.js?v=15","./dragon-norberto.js":"./dragon-norberto.js?v=3","./net.js":"./net.js?v=12","./render.js":"./render.js?v=11","./terrain.js":"./terrain.js?v=11","./sky.js":"./sky.js?v=11"}}</script>
+  <link rel="stylesheet" href="./style.css?v=11">
 </head>
 <body>
  <main id="game">
@@ -35,9 +35,10 @@
    <div class="wing-pad right" id="right-wing" aria-label="Right wing: drag up or down"><div class="track"><span>⌃</span><i></i><span>⌄</span></div><div class="thumb"><span></span></div><small>RIGHT WING</small></div>
   </div>
   <!-- FIRE: thumb-sized button at the bottom centre, visible only while flying (same as the F key and the voice word). -->
-  <button id="fire" class="fire-button" aria-label="Breathe fire" type="button">FIRE</button>
-  <p id="voice-hud" class="voice-hud" aria-live="polite"></p>
-  <p id="mic-state" class="mic-state"></p>
+  <button id="fire" class="fire-button" aria-label="Breathe fire" aria-describedby="fire-caption" type="button">FIRE</button>
+  <p id="fire-caption" class="fire-caption">Say Dracarys to Fire</p>
+  <p id="voice-hud" class="voice-hud" hidden></p>
+  <p id="mic-state" class="mic-state" hidden></p>
   <div class="telemetry" id="telemetry"><span><b id="speed">0</b> <small>KM/H</small></span><span class="horizon-line"></span><span><b id="altitude">0</b> <small>M ALTITUDE</small></span></div>
   <section id="intro" class="intro">
    <div class="intro-title"><p>THE LONG DESCENT</p><h1>DRAGONFALL</h1><div class="title-line"></div><p class="subtitle">Take the wings. Find your flow.</p></div>
@@ -57,7 +58,7 @@
    <div id="tilt-options"><p id="tilt-status" role="status">Hold your phone comfortably. Allow motion access when prompted. Your starting position becomes level flight.</p><button id="calibrate-tilt" type="button" class="text-button">Enable / recenter tilt</button></div>
    <label class="setting-row" for="invert-vertical"><span><strong>Invert up/down</strong><small id="invert-description">Slide both thumbs down to climb, up to dive.</small></span><input id="invert-vertical" type="checkbox" role="switch" checked aria-describedby="invert-description"></label>
    <!-- Waterfall owns its speed; a new flight applies matching speed and ring spacing. -->
-   <label class="setting-row setting-speed" for="speed-slider"><span><strong>Waterfall speed</strong><small>1x gives a gentle flight. Rings stay about 4 seconds apart. Speed and ring spacing apply on your next flight.</small></span><span class="range-wrap"><input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-describedby="speed-value"><output id="speed-value" for="speed-slider">1.00x</output></span></label>
+   <label class="setting-row setting-speed" for="speed-slider"><span><strong>Waterfall speed</strong><small>1x gives a gentle flight. Rings stay 3 to 4 seconds apart. Speed and ring spacing apply on your next flight.</small></span><span class="range-wrap"><input id="speed-slider" type="range" min="0.75" max="1.25" step="0.05" value="1" aria-describedby="speed-value"><output id="speed-value" for="speed-slider">1.00x</output></span></label>
    <label class="setting-row" for="graphics"><span><strong>Graphics</strong><small id="graphics-description">Auto picks Phone on handhelds. Changing it restarts the game.</small></span><select id="graphics"><option value="auto">Auto</option><option value="high">High (film)</option><option value="phone">Phone (fast)</option></select></label>
    <label class="setting-row" for="dragon-style"><span><strong>Dragon</strong><small>Dragon flying by NORBERTO-3D. <a href="https://sketchfab.com/3d-models/dragon-flying-78f809b98bbe426e94d4024dc894b206" target="_blank" rel="noopener">Artist and original</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Adapted size and camera view.</small></span><select id="dragon-style" disabled><option value="norberto">NORBERTO flying dragon</option></select></label>
    <label class="setting-row" for="camera-mode"><span><strong>Camera</strong><small>Rider sits in the saddle; Chase follows from behind.</small></span><select id="camera-mode"><option value="rider">Rider (from the saddle)</option><option value="chase">Chase (behind the dragon)</option></select></label>
@@ -82,5 +83,5 @@
  </main>
  <!-- PeerJS (window.Peer) must load before the game module: net.js reads it when you host or join. -->
  <script src="./vendor/peerjs.min.js"></script>
- <script type="module" src="./private-access.js?v=2"></script>
+ <script type="module" src="./private-access.js?v=3"></script>
 </body></html>

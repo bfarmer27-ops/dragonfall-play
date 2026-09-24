@@ -22,9 +22,12 @@
 
 /* ---- Ryan's 2026-09-09 features: FIRE button, kills, scoreboard, fire flash, new Settings controls ---- */
 /* FIRE: thumb-sized round button at the bottom centre, above the telemetry row; only while flying. */
-.fire-button{position:absolute;left:50%;bottom:max(64px,calc(env(safe-area-inset-bottom) + 58px));transform:translateX(-50%);width:66px;height:66px;border-radius:50%;border:1px solid #ffb07a99;background:radial-gradient(circle at 50% 35%,#ff9a3aa8,#7a2a0aa0 70%);color:#fff2e0;font-size:12px;font-weight:800;letter-spacing:2px;box-shadow:0 0 26px #ff7a2a33,inset 0 0 14px #ffc08033;opacity:0;pointer-events:none;transition:opacity .4s,transform .1s;z-index:3;touch-action:none}
+.fire-button,.fire-caption{--fire-bottom:max(80px,calc(env(safe-area-inset-bottom) + 74px))}
+.fire-button{position:absolute;left:50%;bottom:var(--fire-bottom);transform:translateX(-50%);width:66px;height:66px;border-radius:50%;border:1px solid #ffb07a99;background:radial-gradient(circle at 50% 35%,#ff9a3aa8,#7a2a0aa0 70%);color:#fff2e0;font-size:12px;font-weight:800;letter-spacing:2px;box-shadow:0 0 26px #ff7a2a33,inset 0 0 14px #ffc08033;opacity:0;pointer-events:none;transition:opacity .4s,transform .1s;z-index:3;touch-action:none}
+.fire-caption{position:absolute;left:50%;bottom:calc(var(--fire-bottom) - 22px);transform:translateX(-50%);margin:0;color:#ffd9a8;font-size:12px;font-weight:600;line-height:16px;letter-spacing:.25px;text-shadow:0 1px 6px #001a18,0 0 2px #000;white-space:nowrap;opacity:0;pointer-events:none;z-index:3}
+.playing .fire-caption{opacity:1}
 .playing .fire-button{opacity:.92;pointer-events:auto}.fire-button:active{transform:translateX(-50%) scale(.92)}.fire-button.cooling{opacity:.45}
-@media(max-height:540px) and (orientation:landscape){.fire-button{width:54px;height:54px;bottom:max(40px,calc(env(safe-area-inset-bottom) + 36px));font-size:11px}}
+@media(max-height:540px) and (orientation:landscape){.fire-button,.fire-caption{--fire-bottom:max(62px,calc(env(safe-area-inset-bottom) + 58px))}.fire-button{width:54px;height:54px;font-size:11px}}
 .scores{display:flex;gap:18px}
 /* Fireball flash: the same overlay as the red hit flash, tinted orange for the moment the ball leaves the mouth. */
 #flash.fire{background:radial-gradient(ellipse,transparent 22%,#ff8a2a8c)}
@@ -49,4 +52,5 @@
 .net-status{display:flex;flex-direction:column;gap:6px;align-items:flex-start;margin:0 0 16px}
 .net-code{font:700 34px Manrope,Arial,sans-serif;letter-spacing:8px;color:#e9fff5}.net-label{font-size:11px;letter-spacing:3px;color:#9fc7bb}.net-link{width:100%;max-width:none;font-size:12px}.net-error{color:#ffb4a0}
 
-.voice-hud{position:absolute;top:calc(27% + 26px);left:50%;transform:translateX(-50%);font-size:12px;letter-spacing:1.5px;color:#ffd9a8;text-shadow:0 1px 12px #001a18;opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap;z-index:5}.voice-hud.show{opacity:1}.mic-state{position:absolute;top:calc(27% + 44px);left:50%;transform:translateX(-50%);font-size:11px;letter-spacing:1.5px;color:#b8d6cf;text-shadow:0 1px 12px #001a18;opacity:0;pointer-events:none;white-space:nowrap;z-index:5}.playing .mic-state{opacity:.85}
+/* Microphone diagnostics stay in Settings; speech callbacks retain their hidden nodes. */
+.voice-hud,.mic-state{display:none!important}

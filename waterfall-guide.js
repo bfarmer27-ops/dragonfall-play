@@ -1,6 +1,5 @@
-// A screen marker only. Selection reads physical ring planes and the player's
-// actual position; it never moves the camera, dragon, course, or score.
-import {Vector3} from './vendor/three.module.js';
+// Physical target selection never moves the camera, dragon, course, or score.
+// Ryan removed the on-screen direction popup; ring visibility still uses selection.
 
 function forwardOf(flight) {
  const q=flight.orientation||{x:0,y:0,z:0,w:1};
@@ -58,39 +57,22 @@ export function guideScreenPoint({x,y,behind},width,height) {
  return {x:Math.max(left,Math.min(right,cx+dx)),y:Math.max(top,Math.min(bottom,cy+dy)),angle,offscreen};
 }
 
-export function createWaterfallGuide({container,camera,gates}) {
- const doc=container.ownerDocument,root=doc.createElement('div');
- root.className='waterfall-guide';root.setAttribute('aria-hidden','true');
- root.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:4;overflow:hidden;display:none';
- const marker=doc.createElement('div');
- marker.style.cssText='position:absolute;display:flex;flex-direction:column;align-items:center;gap:4px;transform:translate(-50%,-50%);color:#ffe9a1;text-shadow:0 1px 4px #102d30,0 0 2px #000;font:600 11px/1.25 Manrope,Arial,sans-serif;white-space:nowrap';
- const icon=doc.createElement('span');
- icon.style.cssText='display:block;width:17px;height:17px;font-size:21px;line-height:17px;text-align:center';
- const label=doc.createElement('span');
- label.style.cssText='padding:4px 7px;border-radius:4px;background:#092f36b8;border:1px solid #ffe9a13d;max-width:145px;text-align:center';
- marker.append(icon,label);root.append(marker);container.append(root);
- const world=new Vector3(),projected=new Vector3(),view=new Vector3();
+// Keep the game/debug lifecycle API while drawing no target or contact popup.
+// Selection remains available for nearby physical rings, independently of this UI.
+export function createWaterfallGuide({container,gates}) {
+ const root=container.ownerDocument.createElement('div');
+ root.className='waterfall-guide';root.hidden=true;root.setAttribute('aria-hidden','true');
+ container.append(root);
  let previousIndex=null,disposed=false;
- function update(flight) {
-  if(disposed)return null;
-  if(!doc.body.classList.contains('playing')){root.style.display='none';return null;}
-  const target=selectWaterfallTarget(gates,flight,previousIndex);
-  if(!target){
-   previousIndex=null;root.dataset.ring='';root.style.display=flight.bumperActive?'block':'none';
-   marker.style.left='50%';marker.style.top='65%';icon.textContent='↑';icon.style.transform='none';label.textContent='Surface protection · steer up';
-   return null;
-  }
-  previousIndex=target.index;
-  world.set(target.center.x,target.center.y,target.center.z);
-  camera.updateMatrixWorld();view.copy(world).applyMatrix4(camera.matrixWorldInverse);
-  projected.copy(world).project(camera);
-  const position=guideScreenPoint({x:projected.x,y:projected.y,behind:view.z>=0},container.clientWidth,container.clientHeight);
-  root.style.display='block';marker.style.left=`${position.x}px`;marker.style.top=`${position.y}px`;
-  icon.textContent=position.offscreen?'\u2191':'\u25c7';
-  icon.style.transform=position.offscreen?`rotate(${position.angle}deg)`:'none';
-  label.textContent=flight.bumperActive?'Surface protection · steer up':`${Math.round(target.distance)} m \u00b7 ${target.cue}`;
-  root.dataset.ring=String(target.index);root.dataset.offscreen=String(position.offscreen);
-  return target;
- }
- return {element:root,update,reset(){previousIndex=null;root.style.display='none';},dispose(){disposed=true;root.remove();}};
+ return {
+  element:root,
+  update(flight) {
+   if(disposed)return null;
+   const target=selectWaterfallTarget(gates,flight,previousIndex);
+   previousIndex=target?.index??null;
+   return target;
+  },
+  reset(){previousIndex=null;},
+  dispose(){disposed=true;root.remove();}
+ };
 }
