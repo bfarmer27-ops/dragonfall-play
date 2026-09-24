@@ -1,9 +1,13 @@
 // Stationary course geometry only. The live two-thumb player never follows routeAt.
 // Direction comes from waterfall-flight.js and the player's controls.
 export const FLIGHT_SPEED = 52; // Retired one-thumb helper only.
-export const DEFAULT_SPEED_MULTIPLIER = 1;
+export const DEFAULT_SPEED_MULTIPLIER = 7;
 export const SPEED_MULTIPLIER_MIN = .75;
-export const SPEED_MULTIPLIER_MAX = 1.25;
+export const SPEED_MULTIPLIER_MAX = 10;
+// Keep the smooth course at high speeds rather than spacing its bend rings apart.
+export const RING_SPACING_SPEED_MAX = 1.25;
+// Reset the former capped preference once; later choices on this key persist.
+export const SPEED_STORAGE_KEY = 'dragonfall-waterfall-speed-v2';
 export const FALL_START = 600;
 export const ARC_RADIUS = 360;
 export const ARC_LENGTH = Math.PI * ARC_RADIUS / 2;
@@ -54,19 +58,19 @@ export function segmentAt(distance){return distance<FALL_START?'approach':distan
 
 export function readSpeedMultiplier(){
  try{
-  const raw=globalThis.localStorage?.getItem('dragonfall-waterfall-speed'),v=Number(raw);
+  const raw=globalThis.localStorage?.getItem(SPEED_STORAGE_KEY),v=Number(raw);
   if(raw==null||!Number.isFinite(v)||v<=0)return DEFAULT_SPEED_MULTIPLIER;
   const selected=clamp(v,SPEED_MULTIPLIER_MIN,SPEED_MULTIPLIER_MAX);
-  if(selected!==v)globalThis.localStorage?.setItem('dragonfall-waterfall-speed',String(selected));
+  if(selected!==v)globalThis.localStorage?.setItem(SPEED_STORAGE_KEY,String(selected));
   return selected;
  }catch{return DEFAULT_SPEED_MULTIPLIER;}
 }
 let speedMultiplier=readSpeedMultiplier();
 export function getSpeedMultiplier(){return speedMultiplier;}
-export function setSpeedMultiplier(v){const value=Number(v);speedMultiplier=clamp(Number.isFinite(value)?value:DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,SPEED_MULTIPLIER_MAX);try{globalThis.localStorage?.setItem('dragonfall-waterfall-speed',String(speedMultiplier));}catch{}return speedMultiplier;}
+export function setSpeedMultiplier(v){const value=Number(v);speedMultiplier=clamp(Number.isFinite(value)?value:DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,SPEED_MULTIPLIER_MAX);try{globalThis.localStorage?.setItem(SPEED_STORAGE_KEY,String(speedMultiplier));}catch{}return speedMultiplier;}
 
 export function createRings(selectedSpeed=getSpeedMultiplier()){
- const multiplier=clamp(Number(selectedSpeed)||DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,SPEED_MULTIPLIER_MAX),speed=WATERFALL_CRUISE_SPEED*multiplier,out=[];
+ const multiplier=clamp(Number(selectedSpeed)||DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,RING_SPACING_SPEED_MAX),speed=WATERFALL_CRUISE_SPEED*multiplier,out=[];
  let previous=0;
  while(previous<ROUTE_LENGTH-100){
   // Any interval touching a bend gets 3.1 seconds, leaving a rendered-frame
