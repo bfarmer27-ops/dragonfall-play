@@ -24,6 +24,7 @@ export const WATERFALL_TURN_RING_DISTANCE = FALL_START + ARC_RADIUS * Math.PI / 
 export const WATERFALL_DESCENT_RING_DISTANCE = VERTICAL_START + 180;
 export const WATERFALL_DESCENT_FOLLOW_RING_DISTANCE = VERTICAL_START + 680;
 export const WATERFALL_EXIT_RING_DISTANCE = VERTICAL_END + ARC_RADIUS * Math.PI / 4;
+export const WATERFALL_RIVER_CLEARANCE = 120;
 export const WATERFALL_DESCENT_CLEARANCE = 140;
 export const ENTRY_TOP_Y = 20 + ARC_RADIUS * 2 + (VERTICAL_END - VERTICAL_START);
 const VERTICAL_TOP_Y = ENTRY_TOP_Y - ARC_RADIUS;
@@ -88,13 +89,14 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
  void selectedSpeed;
  // These are deliberate course cues, not a random ring stream: four opening level cues,
  // one 45-degree entry cue, two same-plane descent cues, and one 45-degree exit cue.
+ const offsets=[[-26,22],[24,-18],[-22,26],[22,-20],[-18,10],[22,8],[-24,-12],[18,0]];
  const forced=[
-  ...WATERFALL_OPENING_RING_DISTANCES.map(distance=>({distance,forced:true,normal:{x:0,y:0,z:-1}})),
-  {distance:WATERFALL_APPROACH_RING_DISTANCE,forced:true,normal:{x:0,y:0,z:-1}},
-  {distance:WATERFALL_TURN_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2}},
-  {distance:WATERFALL_DESCENT_RING_DISTANCE,forced:true},
-  {distance:WATERFALL_DESCENT_FOLLOW_RING_DISTANCE,forced:true},
-  {distance:WATERFALL_EXIT_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2}},
+  ...WATERFALL_OPENING_RING_DISTANCES.map((distance,index)=>({distance,forced:true,normal:{x:0,y:0,z:-1},offset:offsets[index]})),
+  {distance:WATERFALL_APPROACH_RING_DISTANCE,forced:true,normal:{x:0,y:0,z:-1},offset:offsets[3]},
+  {distance:WATERFALL_TURN_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2},offset:offsets[4]},
+  {distance:WATERFALL_DESCENT_RING_DISTANCE,forced:true,offset:offsets[5]},
+  {distance:WATERFALL_DESCENT_FOLLOW_RING_DISTANCE,forced:true,offset:offsets[6]},
+  {distance:WATERFALL_EXIT_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2},offset:offsets[7]},
  ];
  const curtainZ=routeAt(FALL_START).z-(ARC_RADIUS-60);
  const descentZ=curtainZ-WATERFALL_DESCENT_CLEARANCE;
@@ -104,7 +106,7 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
   // Keep every ring after the straight drop in one forward plane or farther
   // from the waterfall. This prevents an alternating near/far line beside it.
   const z=distance>=VERTICAL_START?Math.min(p.z,descentZ):p.z;
-  const x=p.x,y=p.y,center={x,y,z};
+  const [offsetX,offsetY]=placement.offset||[0,0],x=p.x+offsetX,y=p.y+offsetY,center={x,y,z};
   out.push({distance,x,altitude:y,z,center,normal,radius:WATERFALL_RING_RADIUS,pitch:p.pitch,fall:p.fall,caught:false,forced:placement.forced});
  }
  return out;
@@ -114,10 +116,10 @@ export function createWaterfallObstacles(){
  const sides=[-1,1,-1,1,-1,1],out=[];
   for(let index=0,distance=WATERFALL_OBSTACLE_START;distance<ROUTE_LENGTH-260;index++,distance+=WATERFALL_OBSTACLE_SPACING){
   const p=routeAt(distance),side=sides[index%sides.length],radius=26+(index%3)*3;
-  // Each island is anchored in one cliff and hangs over the route. Its lower
-  // edge stays above the route so the rider must fly under it, not through it.
-  const underside=p.y+12+(index%2)*3,top=underside+18+(index%3)*3;
-  out.push({distance,index,side,x:p.x+side*28,altitude:(underside+top)/2,underside,top,z:p.z,radius,thickness:top-underside,hit:false});
+  // Each island starts at the river surface and rises into the flight corridor.
+  // The side placement leaves a clear line around it for the ring approach.
+  const riverY=p.y-WATERFALL_RIVER_CLEARANCE,base=riverY,top=p.y+20+(index%3)*14;
+  out.push({distance,index,side,x:p.x+side*28,altitude:(base+top)/2,base,top,z:p.z,radius,thickness:top-base,hit:false});
  }
  return out;
 }

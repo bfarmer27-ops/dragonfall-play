@@ -210,7 +210,7 @@ const obstacles = [];
 function setWaterfallObstacle(o, n) {
  const hazard = WATERFALL_OBSTACLES[n];
  if (!hazard) { o.mesh.visible = false; return; }
- o.n=n;o.d=hazard.distance;o.x=hazard.x;o.alt=hazard.altitude;o.underside=hazard.underside;o.top=hazard.top;o.radius=hazard.radius;o.thickness=hazard.thickness;o.hit=false;
+ o.n=n;o.d=hazard.distance;o.x=hazard.x;o.alt=hazard.altitude;o.base=hazard.base;o.top=hazard.top;o.radius=hazard.radius;o.thickness=hazard.thickness;o.hit=false;
  o.mesh.position.set(hazard.x,hazard.altitude,hazard.z);
  o.mesh.scale.set(o.radius / 2, o.thickness, o.radius / 2);
  o.mesh.rotation.y = (n % 2 ? -.22 : .22);
@@ -1210,7 +1210,7 @@ function updateWorld(dt) {
    const ahead=dx*forward.x+dy*forward.y+dz*forward.z;
    const radial=Math.sqrt(Math.max(0,dx*dx+dy*dy+dz*dz-ahead*ahead));
    const clearance=o.radius+4;
-   const insideHeight=current.y>o.underside&&current.y<o.top;
+   const insideHeight=current.y>o.base&&current.y<o.top;
    if(mode==='playing'&&!o.hit&&insideHeight&&ahead>-clearance&&ahead<clearance&&radial<clearance){o.hit=true;hit('ISLAND GRAZE');}
    o.mesh.visible=!o.hit&&ahead>-120&&ahead<VISIBLE_RANGE;
   }

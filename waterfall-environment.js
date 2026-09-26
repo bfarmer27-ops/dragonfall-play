@@ -1,7 +1,7 @@
 // Emerald Falls: finite, stationary scenery for the manually flown two-thumb course.
 // Textures are CC0 photographs. World-space sampling keeps steep cliffs crisp.
 import * as THREE from './vendor/three.module.js';
-import {routeAt, FALL_START, FALL_END, ARC_RADIUS, ROUTE_LENGTH} from './waterfall-core.js';
+import {routeAt, FALL_START, FALL_END, ARC_RADIUS, ROUTE_LENGTH, WATERFALL_RIVER_CLEARANCE} from './waterfall-core.js';
 
 const clamp = THREE.MathUtils.clamp;
 const smooth = (a,b,x) => {const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
@@ -9,7 +9,6 @@ const hash = (x,z=0) => {const v=Math.sin(x*127.1+z*311.7)*43758.5453;return v-M
 function noise(x,z){const ix=Math.floor(x),iz=Math.floor(z),u=smooth(0,1,x-ix),v=smooth(0,1,z-iz);return THREE.MathUtils.lerp(THREE.MathUtils.lerp(hash(ix,iz),hash(ix+1,iz),u),THREE.MathUtils.lerp(hash(ix,iz+1),hash(ix+1,iz+1),u),v);}
 const lip=routeAt(FALL_START),exit=routeAt(FALL_END);
 const WORLD_END_Z=routeAt(ROUTE_LENGTH).z-400;
-export const WATERFALL_RIVER_CLEARANCE=120;
 // Water rounds the same lip and drops beside the straight flight corridor.
 // The 60 m separation clears the full ring plus the animated dragon's body.
 const riverBendRadius=ARC_RADIUS-60,curtainZ=lip.z-riverBendRadius;

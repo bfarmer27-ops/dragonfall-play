@@ -6,6 +6,7 @@ import {
   VERTICAL_START,
   VERTICAL_END,
   WATERFALL_APPROACH_RING_DISTANCE,
+  WATERFALL_RIVER_CLEARANCE,
   WATERFALL_DESCENT_CLEARANCE,
   WATERFALL_DESCENT_RING_DISTANCE,
   WATERFALL_DESCENT_FOLLOW_RING_DISTANCE,
@@ -35,6 +36,7 @@ assert.equal(rings.length, 8, 'the waterfall uses only the eight planned cues');
 for (const distance of WATERFALL_OPENING_RING_DISTANCES) {
  assert.ok(rings.some(r => close(r.distance, distance)), 'each opening ring exists before the approach cues');
 }
+assert.ok(new Set(rings.map(r => r.x)).size > 1, 'rings require left and right flight, not one straight line');
 assert.ok(approach, 'the approach cue exists before the waterfall');
 assert.ok(approach.distance < FALL_START && approach.normal.z === -1, 'the approach cue is level');
 assert.ok(turn, 'the 45-degree turn cue exists');
@@ -61,7 +63,8 @@ for (let i = 1; i < descent.length; i++) {
 const obstacles = createWaterfallObstacles();
 assert.ok(obstacles.length >= 8, 'the course has side obstacles');
 assert.ok(obstacles.every(o => Math.abs(o.side) === 1 && o.x * o.side > 0 && o.radius >= 26), 'obstacles come from both cliff sides');
-assert.ok(obstacles.every(o => o.underside > routeAt(o.distance).y && o.top > o.underside), 'obstacles leave an underpass');
+assert.ok(obstacles.every(o => close(o.base, routeAt(o.distance).y - WATERFALL_RIVER_CLEARANCE)), 'obstacles start at the river');
+assert.ok(obstacles.every(o => o.top > routeAt(o.distance).y && o.top > o.base), 'obstacles rise into the flight corridor');
 
 setSpeedMultiplier(15);
 assert.equal(getSpeedMultiplier(), 15, 'the waterfall speed setting reaches 15x');
