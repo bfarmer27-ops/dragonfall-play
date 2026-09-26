@@ -9,13 +9,14 @@ export const RING_SPACING_SPEED_MAX = SPEED_MULTIPLIER_MAX;
 // Reset the former capped preference once; later choices on this key persist.
 export const SPEED_STORAGE_KEY = 'dragonfall-waterfall-speed-v2';
 // Give the rider a longer level opening before the first waterfall bend.
-export const FALL_START = 2000;
+export const FALL_START = 2600;
 export const ARC_RADIUS = 360;
 export const ARC_LENGTH = Math.PI * ARC_RADIUS / 2;
 export const VERTICAL_START = FALL_START + ARC_LENGTH;
 export const VERTICAL_END = VERTICAL_START + 1200;
 export const FALL_END = VERTICAL_END + ARC_LENGTH;
-export const ROUTE_LENGTH = FALL_END + 900;
+// Keep a longer river run after the waterfall so the course does not end at the pool.
+export const ROUTE_LENGTH = FALL_END + 1500;
 // These two fixed cues make the first downward turn readable before the waterfall.
 export const WATERFALL_APPROACH_RING_DISTANCE = FALL_START - 420;
 export const WATERFALL_TURN_RING_DISTANCE = FALL_START + ARC_RADIUS * Math.PI / 4;
