@@ -44,6 +44,9 @@ assert.ok(exit, 'the bottom transition cue exists');
 assert.ok(close(exit.normal.y, -Math.SQRT1_2), 'the bottom cue rises at 45 degrees');
 assert.ok(close(exit.normal.z, -Math.SQRT1_2), 'the bottom cue still points forward at 45 degrees');
 assert.ok(descentFirst && descentFollow, 'the two planned descent cues exist');
+assert.ok(descentFirst.distance < VERTICAL_START + 360, 'the first down cue arrives sooner');
+assert.ok(descentFirst.z < turn.z - 150, 'the first down cue moves farther from the waterfall');
+assert.ok(exit.distance > descentFollow.distance, 'the bottom cue stays last and harder');
 
 const descent = rings.filter(r => r.distance >= VERTICAL_START && r.distance < VERTICAL_END);
 assert.equal(descent.length, 2, 'the straight drop has only the two planned cues');
