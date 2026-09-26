@@ -3,7 +3,7 @@
 export const FLIGHT_SPEED = 52; // Retired one-thumb helper only.
 export const DEFAULT_SPEED_MULTIPLIER = 7;
 export const SPEED_MULTIPLIER_MIN = .75;
-export const SPEED_MULTIPLIER_MAX = 10;
+export const SPEED_MULTIPLIER_MAX = 15;
 // Keep the smooth course at high speeds rather than spacing its bend rings apart.
 export const RING_SPACING_SPEED_MAX = SPEED_MULTIPLIER_MAX;
 // Reset the former capped preference once; later choices on this key persist.
@@ -16,6 +16,10 @@ export const VERTICAL_START = FALL_START + ARC_LENGTH;
 export const VERTICAL_END = VERTICAL_START + 1200;
 export const FALL_END = VERTICAL_END + ARC_LENGTH;
 export const ROUTE_LENGTH = FALL_END + 900;
+// These two fixed cues make the first downward turn readable before the waterfall.
+export const WATERFALL_APPROACH_RING_DISTANCE = FALL_START - 420;
+export const WATERFALL_TURN_RING_DISTANCE = FALL_START + ARC_RADIUS * Math.PI / 4;
+export const WATERFALL_DESCENT_CLEARANCE = 90;
 export const ENTRY_TOP_Y = 20 + ARC_RADIUS * 2 + (VERTICAL_END - VERTICAL_START);
 const VERTICAL_TOP_Y = ENTRY_TOP_Y - ARC_RADIUS;
 const VERTICAL_BOTTOM_Y = 20 + ARC_RADIUS;
@@ -75,21 +79,35 @@ export function getSpeedMultiplier(){return speedMultiplier;}
 export function setSpeedMultiplier(v){const value=Number(v);speedMultiplier=clamp(Number.isFinite(value)?value:DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,SPEED_MULTIPLIER_MAX);try{globalThis.localStorage?.setItem(SPEED_STORAGE_KEY,String(speedMultiplier));}catch{}return speedMultiplier;}
 
 export function createRings(selectedSpeed=getSpeedMultiplier()){
- const multiplier=clamp(Number(selectedSpeed)||DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,RING_SPACING_SPEED_MAX),speed=WATERFALL_CRUISE_SPEED*multiplier,out=[];
- let previous=0;
- while(previous<ROUTE_LENGTH-100){
-  // Keep rings five seconds apart at the selected flight speed. This prevents
-  // the short bursts that appeared when the speed multiplier was raised.
-  const distance=previous+speed*WATERFALL_RING_SECONDS;
-  if(distance>=ROUTE_LENGTH-100)break;
-  const p=routeAt(distance),normal=routeTangent(distance);
-  // The opening rings shift a little left/right and up/down. The shift is
-  // small enough to keep the ring readable while making the rider steer.
-  const lanes=[-10,9,-8,11,-9,8];
-  const offset=distance<FALL_START?{x:lanes[out.length%lanes.length],y:[0,5,-4,6,-5,3][out.length%6],z:0}:{x:0,y:0,z:0};
-  const x=p.x+offset.x,y=p.y+offset.y,z=p.z+offset.z,center={x,y,z};
-  out.push({distance,x,altitude:y,z,center,normal,radius:WATERFALL_RING_RADIUS,pitch:p.pitch,fall:p.fall,caught:false});
-  previous=distance;
+ const multiplier=clamp(Number(selectedSpeed)||DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,RING_SPACING_SPEED_MAX),speed=WATERFALL_CRUISE_SPEED*multiplier;
+ const regular=[];
+ for(let distance=speed*WATERFALL_RING_SECONDS;distance<ROUTE_LENGTH-100;distance+=speed*WATERFALL_RING_SECONDS)regular.push({distance,forced:false});
+ // The approach cue is level. The next cue sits on the quarter-turn at 45 degrees,
+ // making the required downward turn visible before the rider reaches the curtain.
+ const forced=[
+  {distance:WATERFALL_APPROACH_RING_DISTANCE,forced:true},
+  {distance:WATERFALL_TURN_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2}},
+ ];
+ const specialGap=Math.max(180,speed*1.5);
+ const placements=[...forced,...regular].sort((a,b)=>a.distance-b.distance);
+ const chosen=[];
+ for(const candidate of placements){
+  if(!candidate.forced&&forced.some(r=>Math.abs(r.distance-candidate.distance)<specialGap))continue;
+  if(chosen.some(r=>Math.abs(r.distance-candidate.distance)<1))continue;
+  chosen.push(candidate);
+ }
+ const curtainZ=routeAt(FALL_START).z-(ARC_RADIUS-60);
+ const descentZ=curtainZ-WATERFALL_DESCENT_CLEARANCE;
+ const lanes=[-10,9,-8,11,-9,8],out=[];
+ for(const placement of chosen){
+  const {distance}=placement,p=routeAt(distance),normal=placement.normal||routeTangent(distance);
+  // Keep every ring after the straight drop in one forward plane or farther
+  // from the waterfall. This prevents an alternating near/far line beside it.
+  const z=distance>=VERTICAL_START?Math.min(p.z,descentZ):p.z;
+  const approachIndex=out.length;
+  const offset=distance<FALL_START?{x:lanes[approachIndex%lanes.length],y:[0,5,-4,6,-5,3][approachIndex%6],z:0}:{x:0,y:0,z:0};
+  const x=p.x+offset.x,y=p.y+offset.y,center={x,y,z};
+  out.push({distance,x,altitude:y,z,center,normal,radius:WATERFALL_RING_RADIUS,pitch:p.pitch,fall:p.fall,caught:false,forced:placement.forced});
  }
  return out;
 }

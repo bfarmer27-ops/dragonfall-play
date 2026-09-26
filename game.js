@@ -23,7 +23,7 @@ import {wingbeatPose} from './wingbeat.js';
 // flight.js is imported without a cache-buster so terrain.js and dressing.js (which import './flight.js')
 // share this single module instance with game.js.
 import {clamp, damp, centerAt, newFlight, stepFlight, getSpeedMultiplier, setSpeedMultiplier, applyVerticalGain, LANDSCAPE_VERTICAL_GAIN, PHYSICS_STEP} from './flight.js';
-import {readInvertSetting, saveInvertSetting, invertVerticalControls, readControlMode, saveControlMode} from './control-settings.js?v=7';
+import {readInvertSetting, saveInvertSetting, invertVerticalControls, normalizeThumbInput, readControlMode, saveControlMode} from './control-settings.js?v=8';
 import {createTilt} from './tilt.js';
 // Ryan's 2026-09-09 features (spec/features-integration.md): sound, voice fire word, fireballs, friends over WebRTC.
 import {createAudio} from './audio.js';
@@ -300,8 +300,7 @@ $('game').addEventListener('pointermove', e => {
  for (const side of ['left', 'right']) {
   const p = pointers[side];
   if (p?.id === e.pointerId) {
-   let v = clamp((p.y - e.clientY) / padRange(), -1, 1);
-   v = Math.abs(v) < 0.02 ? 0 : Math.sign(v) * (Math.abs(v) - 0.02) / 0.98;
+   let v = normalizeThumbInput(p.y, e.clientY, padRange(), viewportHeight);
    inputs[side] = v;
    updatePad(side, v, true);
    e.preventDefault();
