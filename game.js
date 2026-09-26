@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import {TIER, setTier, readTierSetting} from './quality.js';
 import {createRenderSystem} from './render.js';
 import {createSky} from './sky.js';
-import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=3';
+import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=4';
 import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=3';
 import {createTerrain, terrainHeight, createArchGeometry, createBoulderGeometry, createRockMaterial, worldSlope} from './terrain.js';
 import {createWater} from './water.js';
