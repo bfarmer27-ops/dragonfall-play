@@ -7,6 +7,7 @@ import {limitWaterfallMovement} from './waterfall-bumper.js?v=1';
 
 export const WATERFALL_TURN_RADIUS = ARC_RADIUS;
 export const WATERFALL_RING_RADIUS = 13.5;
+export const WATERFALL_VERTICAL_RESPONSE = 1.5;
 const CAMERA_OFFSET = new Vector3(0, 6.4, 40);
 const CAMERA_TARGET = new Vector3(0, 1.5, -35);
 const LOCAL_UP = new Vector3(0, 1, 0);
@@ -47,7 +48,7 @@ export function stepWaterfallFlight(f, left, right, dt) {
     // A new flight snapshots its speed so fixed rings retain their promised timing.
     // Pitch and elapsed time cannot create an unannounced acceleration on the drop.
     f.speed = WATERFALL_CRUISE_SPEED*f.speedMultiplier;
-    f.pitchRate = command.pitch * f.speed / WATERFALL_TURN_RADIUS;
+    f.pitchRate = command.pitch * f.speed / WATERFALL_TURN_RADIUS * WATERFALL_VERTICAL_RESPONSE;
     f.yawRate = command.bank * f.speed / WATERFALL_TURN_RADIUS;
     axis.set(f.pitchRate, f.yawRate, 0);
     const rate = axis.length();

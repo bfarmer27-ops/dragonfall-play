@@ -29,8 +29,8 @@ import {createTilt} from './tilt.js';
 import {createAudio} from './audio.js';
 import {createSpeech, readFireWord, saveFireWord, STICKY_STATUSES} from './speech.js';
 import {createNoiseFire} from './noise-fire.js?v=1';
-import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, createRings as createWaterfallRings, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
-import {initializeWaterfallFlight,stepWaterfallFlight,waterfallCameraPose,crossesWaterfallRing} from './waterfall-flight.js?v=3';
+import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, createRings as createWaterfallRings, createWaterfallObstacles, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
+import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing} from './waterfall-flight.js?v=4';
 import {createFireballs} from './fireball.js';
 import {createNet} from './net.js';
 
@@ -39,6 +39,7 @@ const TAU = Math.PI * 2;
 const query = new URLSearchParams(location.search);
 const WATERFALL_MAP = location.pathname.includes('/waterfall/');
 let WATERFALL_RINGS = WATERFALL_MAP ? createWaterfallRings() : [];
+const WATERFALL_OBSTACLES = WATERFALL_MAP ? createWaterfallObstacles() : [];
 const debug = query.get('debug') === '1';
 const showStats = query.get('stats') === '1';
 
@@ -155,7 +156,7 @@ if (WATERFALL_MAP) {
 }
 // Ticks share the ring material so mergeRigid bakes ring + 4 ticks into ONE mesh (2 draw calls per gate with the halo).
 // Beyond VISIBLE_RANGE the fog hides a gate or rock anyway; phone culls closer to stay under the draw-call budget.
-const VISIBLE_RANGE = tier === 'phone' ? 700 : 1100;
+const VISIBLE_RANGE = 2200;
 function setGate(g, n) {
  g.n = n;
  if (WATERFALL_MAP) {
@@ -206,7 +207,17 @@ const rockGeometry = createBoulderGeometry();
 // of the dark wet-basalt tint every rock under ~50 m gets (they read as flat grey pillars at 150-300 m otherwise).
 const boulderMaterial = createRockMaterial(renderer, {heightOffset: 40, textures: terrain.rockMaterial.userData.textures});
 const obstacles = [];
+function setWaterfallObstacle(o, n) {
+ const hazard = WATERFALL_OBSTACLES[n];
+ if (!hazard) { o.mesh.visible = false; return; }
+ o.n=n;o.d=hazard.distance;o.x=hazard.x;o.alt=hazard.altitude;o.radius=hazard.radius;o.height=hazard.height;o.hit=false;
+ o.mesh.position.set(hazard.x,hazard.altitude,hazard.z);
+ o.mesh.scale.set(o.radius / 2, o.height, o.radius / 2);
+ o.mesh.rotation.y = (n % 2 ? -.22 : .22);
+ o.mesh.visible = true;
+}
 function setObstacle(o, n) {
+ if (WATERFALL_MAP) { setWaterfallObstacle(o, n); return; }
  o.n = n;
  o.d = 300 + n * 240;
  o.x = centerAt(o.d) + (hash(n, 3) - 0.5) * 59;
@@ -216,7 +227,7 @@ function setObstacle(o, n) {
  o.mesh.scale.set(o.radius / 2, o.height, o.radius / 2);
  o.mesh.rotation.y = hash(n, 7) * Math.PI;
 }
-for (let i = 0; i < 9; i++) {
+for (let i = 0; i < (WATERFALL_MAP ? WATERFALL_OBSTACLES.length : 9); i++) {
  const mesh = new THREE.Mesh(rockGeometry, boulderMaterial);
  scene.add(mesh);
  const o = {mesh};
@@ -249,7 +260,6 @@ function buildWaterfallMapScene() {
  for (const chunk of terrain.chunks || []) chunk.group.visible=false;
  terrain.river.visible=false;
  waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer});
- for(const o of obstacles)o.mesh.visible=false;
  for(const a of arches)a.mesh.visible=false;
 }
 buildWaterfallMapScene();
@@ -1192,7 +1202,17 @@ function updateWorld(dt) {
    if(mode==='playing'&&!g.caught&&crossesWaterfallRing(flight.previousPosition,current,g.ring)){
     g.caught=true;g.passed=true;flight.gates++;audio.gate();toast('GATE CAUGHT +1');
    }
-   g.group.visible=!g.caught&&g.n>=next&&g.n<=next+1&&Math.hypot(g.group.position.x-current.x,g.group.position.y-current.y,g.group.position.z-current.z)<VISIBLE_RANGE;
+   // Keep three upcoming rings on screen so the rider can choose a line early.
+   g.group.visible=!g.caught&&g.n>=next&&g.n<=next+2&&Math.hypot(g.group.position.x-current.x,g.group.position.y-current.y,g.group.position.z-current.z)<VISIBLE_RANGE;
+  }
+  const forward=waterfallForward(flight);
+  for(const o of obstacles){
+   const dx=o.x-current.x,dy=o.alt-current.y,dz=o.d===undefined?0:(o.mesh.position.z-current.z);
+   const ahead=dx*forward.x+dy*forward.y+dz*forward.z;
+   const radial=Math.sqrt(Math.max(0,dx*dx+dy*dy+dz*dz-ahead*ahead));
+   const clearance=o.radius+4;
+   if(mode==='playing'&&!o.hit&&ahead>-clearance&&ahead<clearance&&radial<clearance){o.hit=true;hit('ROCK GRAZE');}
+   o.mesh.visible=!o.hit&&ahead>-120&&ahead<VISIBLE_RANGE;
   }
   // No route-driven transforms, recycling, spin or pulsing in this finite map.
   return;

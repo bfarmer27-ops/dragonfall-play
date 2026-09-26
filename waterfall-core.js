@@ -5,10 +5,11 @@ export const DEFAULT_SPEED_MULTIPLIER = 7;
 export const SPEED_MULTIPLIER_MIN = .75;
 export const SPEED_MULTIPLIER_MAX = 10;
 // Keep the smooth course at high speeds rather than spacing its bend rings apart.
-export const RING_SPACING_SPEED_MAX = 1.25;
+export const RING_SPACING_SPEED_MAX = SPEED_MULTIPLIER_MAX;
 // Reset the former capped preference once; later choices on this key persist.
 export const SPEED_STORAGE_KEY = 'dragonfall-waterfall-speed-v2';
-export const FALL_START = 600;
+// Give the rider a longer level opening before the first waterfall bend.
+export const FALL_START = 2000;
 export const ARC_RADIUS = 360;
 export const ARC_LENGTH = Math.PI * ARC_RADIUS / 2;
 export const VERTICAL_START = FALL_START + ARC_LENGTH;
@@ -24,11 +25,15 @@ export const FLIGHT_LIMITS = Object.freeze({side:34,minAltitude:10,maxAltitude:E
 // The opening and placement share these values with the visible ring meshes.
 export const WATERFALL_RING_RADIUS = 24;
 export const WATERFALL_CRUISE_SPEED = 24;
-export const WATERFALL_RING_SECONDS = 4;
-export const WATERFALL_BEND_RING_SECONDS = 3.1;
+// Ring gaps are timed from the real flight speed. The old 1.25x cap made the
+// default 7x flight put a ring in front of the rider about every 0.7 seconds.
+export const WATERFALL_RING_SECONDS = 5;
+export const WATERFALL_BEND_RING_SECONDS = 5;
 export const WATERFALL_RING_SPACING = WATERFALL_CRUISE_SPEED * WATERFALL_RING_SECONDS;
 export const WATERFALL_APPROACH_RING_SPACING = WATERFALL_RING_SPACING;
 export const WATERFALL_RING_OFFSET = 0;
+export const WATERFALL_OBSTACLE_START = 320;
+export const WATERFALL_OBSTACLE_SPACING = 420;
 export const clamp = (n,lo,hi) => Math.min(hi,Math.max(lo,n));
 
 // distance is real arc length throughout. The level plateau leads directly into
@@ -73,17 +78,30 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
  const multiplier=clamp(Number(selectedSpeed)||DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,RING_SPACING_SPEED_MAX),speed=WATERFALL_CRUISE_SPEED*multiplier,out=[];
  let previous=0;
  while(previous<ROUTE_LENGTH-100){
-  // Any interval touching a bend gets 3.1 seconds, leaving a rendered-frame
-  // margin above the three-second minimum while staying below 15 degrees. This
-  // also covers the last level ring and first vertical ring at each join.
-  const straightEnd=previous+speed*WATERFALL_RING_SECONDS;
-  const touchesBend=(previous<VERTICAL_START&&straightEnd>=FALL_START)||(previous<FALL_END&&straightEnd>=VERTICAL_END);
-  const seconds=touchesBend?WATERFALL_BEND_RING_SECONDS:WATERFALL_RING_SECONDS;
-  const distance=previous+speed*seconds;
+  // Keep the same five-second timing on each course section. A boundary can
+  // shorten one gap, but never creates a burst of rings at high speed.
+  const longGap=speed*WATERFALL_RING_SECONDS;
+  const boundary=previous<FALL_START?FALL_START:previous<VERTICAL_START?VERTICAL_START:previous<VERTICAL_END?VERTICAL_END:previous<FALL_END?FALL_END:ROUTE_LENGTH-100;
+  const distance=Math.min(previous+longGap,boundary);
   if(distance>=ROUTE_LENGTH-100)break;
-  const p=routeAt(distance),normal=routeTangent(distance),center={x:0,y:p.y,z:p.z};
-  out.push({distance,x:0,altitude:p.y,z:p.z,center,normal,radius:WATERFALL_RING_RADIUS,pitch:p.pitch,fall:p.fall,caught:false});
+  if(distance<=previous+1e-6)break;
+  const p=routeAt(distance),normal=routeTangent(distance);
+  // The opening rings shift a little left/right and up/down. The shift is
+  // small enough to keep the ring readable while making the rider steer.
+  const lanes=[-10,9,-8,11,-9,8];
+  const offset=distance<FALL_START?{x:lanes[out.length%lanes.length],y:[0,5,-4,6,-5,3][out.length%6],z:0}:{x:0,y:0,z:0};
+  const x=p.x+offset.x,y=p.y+offset.y,z=p.z+offset.z,center={x,y,z};
+  out.push({distance,x,altitude:y,z,center,normal,radius:WATERFALL_RING_RADIUS,pitch:p.pitch,fall:p.fall,caught:false});
   previous=distance;
+ }
+ return out;
+}
+
+export function createWaterfallObstacles(){
+ const lanes=[-22,24,-18,20,-25,17],heights=[18,25,21,29,20,24],out=[];
+ for(let index=0,distance=WATERFALL_OBSTACLE_START;distance<ROUTE_LENGTH-260;index++,distance+=WATERFALL_OBSTACLE_SPACING){
+  const p=routeAt(distance),lane=lanes[index%lanes.length];
+  out.push({distance,index,x:p.x+lane,altitude:p.y+(index%3-1)*9,z:p.z,radius:4.5+(index%2)*.8,height:heights[index%heights.length],hit:false});
  }
  return out;
 }
