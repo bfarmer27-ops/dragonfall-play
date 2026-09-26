@@ -30,7 +30,7 @@ import {createAudio} from './audio.js';
 import {createSpeech, readFireWord, saveFireWord, STICKY_STATUSES} from './speech.js';
 import {createNoiseFire} from './noise-fire.js?v=1';
 import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, createRings as createWaterfallRings, createWaterfallObstacles, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
-import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing} from './waterfall-flight.js?v=4';
+import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing} from './waterfall-flight.js?v=5';
 import {createFireballs} from './fireball.js';
 import {createNet} from './net.js';
 

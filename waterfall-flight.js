@@ -45,8 +45,9 @@ export function stepWaterfallFlight(f, left, right, dt) {
   const axis = new Vector3(), halfTurn = new Quaternion(), fullTurn = new Quaternion();
   const middle = new Quaternion(), forward = new Vector3();
   for (let i = 0; i < count; i++) {
-    // A new flight snapshots its speed so fixed rings retain their promised timing.
-    // Pitch and elapsed time cannot create an unannounced acceleration on the drop.
+    // Read the saved setting every physics step so a live slider change affects
+    // the current flight instead of waiting for a restart.
+    f.speedMultiplier = getSpeedMultiplier();
     f.speed = WATERFALL_CRUISE_SPEED*f.speedMultiplier;
     f.pitchRate = command.pitch * f.speed / WATERFALL_TURN_RADIUS * WATERFALL_VERTICAL_RESPONSE;
     f.yawRate = command.bank * f.speed / WATERFALL_TURN_RADIUS;

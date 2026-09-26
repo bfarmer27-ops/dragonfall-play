@@ -17,9 +17,10 @@ export const VERTICAL_END = VERTICAL_START + 1200;
 export const FALL_END = VERTICAL_END + ARC_LENGTH;
 // Keep a longer river run after the waterfall so the course does not end at the pool.
 export const ROUTE_LENGTH = FALL_END + 1500;
-// These two fixed cues make the first downward turn readable before the waterfall.
+// Fixed cues make both the approach and the waterfall exit readable.
 export const WATERFALL_APPROACH_RING_DISTANCE = FALL_START - 420;
 export const WATERFALL_TURN_RING_DISTANCE = FALL_START + ARC_RADIUS * Math.PI / 4;
+export const WATERFALL_EXIT_RING_DISTANCE = VERTICAL_END + ARC_RADIUS * Math.PI / 4;
 export const WATERFALL_DESCENT_CLEARANCE = 90;
 export const ENTRY_TOP_Y = 20 + ARC_RADIUS * 2 + (VERTICAL_END - VERTICAL_START);
 const VERTICAL_TOP_Y = ENTRY_TOP_Y - ARC_RADIUS;
@@ -88,6 +89,7 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
  const forced=[
   {distance:WATERFALL_APPROACH_RING_DISTANCE,forced:true},
   {distance:WATERFALL_TURN_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2}},
+  {distance:WATERFALL_EXIT_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2}},
  ];
  const specialGap=Math.max(180,speed*1.5);
  const placements=[...forced,...regular].sort((a,b)=>a.distance-b.distance);
