@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import {
   ARC_RADIUS,
   FALL_START,
-  FALL_END,
   VERTICAL_START,
+  VERTICAL_END,
   WATERFALL_APPROACH_RING_DISTANCE,
   WATERFALL_DESCENT_CLEARANCE,
+  WATERFALL_DESCENT_RING_DISTANCE,
+  WATERFALL_DESCENT_FOLLOW_RING_DISTANCE,
   WATERFALL_TURN_RING_DISTANCE,
   WATERFALL_EXIT_RING_DISTANCE,
   createRings,
@@ -23,6 +25,9 @@ const rings = createRings(7);
 const approach = rings.find(r => close(r.distance, WATERFALL_APPROACH_RING_DISTANCE));
 const turn = rings.find(r => close(r.distance, WATERFALL_TURN_RING_DISTANCE));
 const exit = rings.find(r => close(r.distance, WATERFALL_EXIT_RING_DISTANCE));
+const descentFirst = rings.find(r => close(r.distance, WATERFALL_DESCENT_RING_DISTANCE));
+const descentFollow = rings.find(r => close(r.distance, WATERFALL_DESCENT_FOLLOW_RING_DISTANCE));
+assert.equal(rings.length, 5, 'the waterfall uses only the five planned cues');
 assert.ok(approach, 'the approach cue exists before the waterfall');
 assert.ok(approach.distance < FALL_START && approach.normal.z === -1, 'the approach cue is level');
 assert.ok(turn, 'the 45-degree turn cue exists');
@@ -31,18 +36,21 @@ assert.ok(close(turn.normal.z, -Math.SQRT1_2), 'the turn cue still points forwar
 assert.ok(exit, 'the bottom transition cue exists');
 assert.ok(close(exit.normal.y, -Math.SQRT1_2), 'the bottom cue rises at 45 degrees');
 assert.ok(close(exit.normal.z, -Math.SQRT1_2), 'the bottom cue still points forward at 45 degrees');
+assert.ok(descentFirst && descentFollow, 'the two planned descent cues exist');
 
-const descent = rings.filter(r => r.distance >= VERTICAL_START && r.distance < FALL_END);
+const descent = rings.filter(r => r.distance >= VERTICAL_START && r.distance < VERTICAL_END);
+assert.equal(descent.length, 2, 'the straight drop has only the two planned cues');
 assert.ok(descent.length >= 1, 'the waterfall has descent cues');
 const safeDescentZ = routeAt(FALL_START).z - (ARC_RADIUS - 60) - WATERFALL_DESCENT_CLEARANCE;
 assert.ok(descent.every(r => r.z <= safeDescentZ + 1e-6), 'descent cues stay in the far plane');
+assert.equal(descentFirst.z, descentFollow.z, 'descent cues stay in one plane');
 for (let i = 1; i < descent.length; i++) {
   assert.ok(descent[i].z <= descent[i - 1].z + 1e-6, 'descent cues never move closer to the waterfall');
 }
 
 setSpeedMultiplier(15);
 assert.equal(getSpeedMultiplier(), 15, 'the waterfall speed setting reaches 15x');
-assert.ok(createRings(15).length >= 3, '15x still keeps the approach, turn, and course cues');
+assert.equal(createRings(15).length, 5, '15x keeps the same five deliberate cues');
 
 setSpeedMultiplier(7);
 const flight = {};
@@ -57,4 +65,4 @@ assert.equal(normalizeThumbInput(700, 835, 100, 844), -1, 'bottom edge is maximu
 assert.equal(normalizeThumbInput(700, 8, 100, 844), 1, 'top edge is maximum up');
 assert.ok(Math.abs(normalizeThumbInput(700, 650, 100, 844) - .4897959183673469) < 1e-6, 'normal thumb travel keeps its scaled value');
 
-console.log(`waterfall-course: ${rings.length} rings at 7x; ${descent.length} descent cues; speed 15x; edge thumb saturation passed`);
+console.log(`waterfall-course: ${rings.length} planned rings at 7x; ${descent.length} straight-drop cues; bottom 45-degree transition; speed 15x; edge thumb saturation passed`);
