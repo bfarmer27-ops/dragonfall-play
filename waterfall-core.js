@@ -1,13 +1,13 @@
 // Stationary course geometry only. The live two-thumb player never follows routeAt.
 // Direction comes from waterfall-flight.js and the player's controls.
 export const FLIGHT_SPEED = 52; // Retired one-thumb helper only.
-export const DEFAULT_SPEED_MULTIPLIER = 7;
+export const DEFAULT_SPEED_MULTIPLIER = 12;
 export const SPEED_MULTIPLIER_MIN = .75;
 export const SPEED_MULTIPLIER_MAX = 15;
 // Keep the smooth course at high speeds rather than spacing its bend rings apart.
 export const RING_SPACING_SPEED_MAX = SPEED_MULTIPLIER_MAX;
 // Reset the former capped preference once; later choices on this key persist.
-export const SPEED_STORAGE_KEY = 'dragonfall-waterfall-speed-v2';
+export const SPEED_STORAGE_KEY='dragonfall-waterfall-speed-v3';
 // Give the rider a longer level opening before the first waterfall bend.
 export const FALL_START = 2600;
 export const ARC_RADIUS = 360;
@@ -19,6 +19,7 @@ export const FALL_END = VERTICAL_END + ARC_LENGTH;
 export const ROUTE_LENGTH = FALL_END + 1500;
 // Fixed cues make both the approach and the waterfall exit readable.
 export const WATERFALL_APPROACH_RING_DISTANCE = FALL_START - 420;
+export const WATERFALL_OPENING_RING_DISTANCES = Object.freeze([620,1160,1700]);
 export const WATERFALL_TURN_RING_DISTANCE = FALL_START + ARC_RADIUS * Math.PI / 4;
 export const WATERFALL_DESCENT_RING_DISTANCE = VERTICAL_START + 360;
 export const WATERFALL_DESCENT_FOLLOW_RING_DISTANCE = VERTICAL_START + 800;
@@ -85,9 +86,10 @@ export function setSpeedMultiplier(v){const value=Number(v);speedMultiplier=clam
 export function createRings(selectedSpeed=getSpeedMultiplier()){
  // Ring locations are fixed so the course does not change shape when speed changes.
  void selectedSpeed;
- // These are deliberate course cues, not a random ring stream: one level cue,
+ // These are deliberate course cues, not a random ring stream: four opening level cues,
  // one 45-degree entry cue, two same-plane descent cues, and one 45-degree exit cue.
  const forced=[
+  ...WATERFALL_OPENING_RING_DISTANCES.map(distance=>({distance,forced:true,normal:{x:0,y:0,z:-1}})),
   {distance:WATERFALL_APPROACH_RING_DISTANCE,forced:true,normal:{x:0,y:0,z:-1}},
   {distance:WATERFALL_TURN_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2}},
   {distance:WATERFALL_DESCENT_RING_DISTANCE,forced:true},
@@ -109,10 +111,13 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
 }
 
 export function createWaterfallObstacles(){
- const lanes=[-22,24,-18,20,-25,17],heights=[18,25,21,29,20,24],out=[];
- for(let index=0,distance=WATERFALL_OBSTACLE_START;distance<ROUTE_LENGTH-260;index++,distance+=WATERFALL_OBSTACLE_SPACING){
-  const p=routeAt(distance),lane=lanes[index%lanes.length];
-  out.push({distance,index,x:p.x+lane,altitude:p.y+(index%3-1)*9,z:p.z,radius:4.5+(index%2)*.8,height:heights[index%heights.length],hit:false});
+ const sides=[-1,1,-1,1,-1,1],out=[];
+  for(let index=0,distance=WATERFALL_OBSTACLE_START;distance<ROUTE_LENGTH-260;index++,distance+=WATERFALL_OBSTACLE_SPACING){
+  const p=routeAt(distance),side=sides[index%sides.length],radius=26+(index%3)*3;
+  // Each island is anchored in one cliff and hangs over the route. Its lower
+  // edge stays above the route so the rider must fly under it, not through it.
+  const underside=p.y+12+(index%2)*3,top=underside+18+(index%3)*3;
+  out.push({distance,index,side,x:p.x+side*28,altitude:(underside+top)/2,underside,top,z:p.z,radius,thickness:top-underside,hit:false});
  }
  return out;
 }

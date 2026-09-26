@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   ARC_RADIUS,
   FALL_START,
+  DEFAULT_SPEED_MULTIPLIER,
   VERTICAL_START,
   VERTICAL_END,
   WATERFALL_APPROACH_RING_DISTANCE,
@@ -10,7 +11,9 @@ import {
   WATERFALL_DESCENT_FOLLOW_RING_DISTANCE,
   WATERFALL_TURN_RING_DISTANCE,
   WATERFALL_EXIT_RING_DISTANCE,
+  WATERFALL_OPENING_RING_DISTANCES,
   createRings,
+  createWaterfallObstacles,
   routeAt,
   setSpeedMultiplier,
   getSpeedMultiplier,
@@ -27,7 +30,11 @@ const turn = rings.find(r => close(r.distance, WATERFALL_TURN_RING_DISTANCE));
 const exit = rings.find(r => close(r.distance, WATERFALL_EXIT_RING_DISTANCE));
 const descentFirst = rings.find(r => close(r.distance, WATERFALL_DESCENT_RING_DISTANCE));
 const descentFollow = rings.find(r => close(r.distance, WATERFALL_DESCENT_FOLLOW_RING_DISTANCE));
-assert.equal(rings.length, 5, 'the waterfall uses only the five planned cues');
+assert.equal(DEFAULT_SPEED_MULTIPLIER, 12, 'the default waterfall speed is 12x');
+assert.equal(rings.length, 8, 'the waterfall uses only the eight planned cues');
+for (const distance of WATERFALL_OPENING_RING_DISTANCES) {
+ assert.ok(rings.some(r => close(r.distance, distance)), 'each opening ring exists before the approach cues');
+}
 assert.ok(approach, 'the approach cue exists before the waterfall');
 assert.ok(approach.distance < FALL_START && approach.normal.z === -1, 'the approach cue is level');
 assert.ok(turn, 'the 45-degree turn cue exists');
@@ -48,9 +55,14 @@ for (let i = 1; i < descent.length; i++) {
   assert.ok(descent[i].z <= descent[i - 1].z + 1e-6, 'descent cues never move closer to the waterfall');
 }
 
+const obstacles = createWaterfallObstacles();
+assert.ok(obstacles.length >= 8, 'the course has side obstacles');
+assert.ok(obstacles.every(o => Math.abs(o.side) === 1 && o.x * o.side > 0 && o.radius >= 26), 'obstacles come from both cliff sides');
+assert.ok(obstacles.every(o => o.underside > routeAt(o.distance).y && o.top > o.underside), 'obstacles leave an underpass');
+
 setSpeedMultiplier(15);
 assert.equal(getSpeedMultiplier(), 15, 'the waterfall speed setting reaches 15x');
-assert.equal(createRings(15).length, 5, '15x keeps the same five deliberate cues');
+assert.equal(createRings(15).length, 8, '15x keeps the same eight deliberate cues');
 
 setSpeedMultiplier(7);
 const flight = {};
