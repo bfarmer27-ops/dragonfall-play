@@ -78,13 +78,10 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
  const multiplier=clamp(Number(selectedSpeed)||DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,RING_SPACING_SPEED_MAX),speed=WATERFALL_CRUISE_SPEED*multiplier,out=[];
  let previous=0;
  while(previous<ROUTE_LENGTH-100){
-  // Keep the same five-second timing on each course section. A boundary can
-  // shorten one gap, but never creates a burst of rings at high speed.
-  const longGap=speed*WATERFALL_RING_SECONDS;
-  const boundary=previous<FALL_START?FALL_START:previous<VERTICAL_START?VERTICAL_START:previous<VERTICAL_END?VERTICAL_END:previous<FALL_END?FALL_END:ROUTE_LENGTH-100;
-  const distance=Math.min(previous+longGap,boundary);
+  // Keep rings five seconds apart at the selected flight speed. This prevents
+  // the short bursts that appeared when the speed multiplier was raised.
+  const distance=previous+speed*WATERFALL_RING_SECONDS;
   if(distance>=ROUTE_LENGTH-100)break;
-  if(distance<=previous+1e-6)break;
   const p=routeAt(distance),normal=routeTangent(distance);
   // The opening rings shift a little left/right and up/down. The shift is
   // small enough to keep the ring readable while making the rider steer.
