@@ -8,8 +8,11 @@ export const SPEED_MULTIPLIER_MAX = 15;
 export const RING_SPACING_SPEED_MAX = SPEED_MULTIPLIER_MAX;
 // Reset the former capped preference once; later choices on this key persist.
 export const SPEED_STORAGE_KEY='dragonfall-waterfall-speed-v3';
+// Sky Isles: a prelude of floating islands above a cloud sea before the gorge begins (2026-10-06).
+export const PRELUDE_LENGTH = 2200;
+export const WATERFALL_PRELUDE_RING_DISTANCES = Object.freeze([520, 1120, 1720]);
 // Give the rider a longer level opening before the first waterfall bend.
-export const FALL_START = 2600;
+export const FALL_START = 2600 + PRELUDE_LENGTH;
 export const ARC_RADIUS = 360;
 export const ARC_LENGTH = Math.PI * ARC_RADIUS / 2;
 export const VERTICAL_START = FALL_START + ARC_LENGTH;
@@ -19,7 +22,7 @@ export const FALL_END = VERTICAL_END + ARC_LENGTH;
 export const ROUTE_LENGTH = FALL_END + 1500;
 // Fixed cues make both the approach and the waterfall exit readable.
 export const WATERFALL_APPROACH_RING_DISTANCE = FALL_START - 420;
-export const WATERFALL_OPENING_RING_DISTANCES = Object.freeze([620,1160,1700]);
+export const WATERFALL_OPENING_RING_DISTANCES = Object.freeze([620,1160,1700].map(d => d + PRELUDE_LENGTH));
 export const WATERFALL_TURN_RING_DISTANCE = FALL_START + ARC_RADIUS * Math.PI / 4;
 export const WATERFALL_DESCENT_RING_DISTANCE = VERTICAL_START + 180;
 export const WATERFALL_DESCENT_FOLLOW_RING_DISTANCE = VERTICAL_START + 680;
@@ -104,7 +107,10 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
  // These are deliberate course cues, not a random ring stream: four opening level cues,
  // one 45-degree entry cue, two same-plane descent cues, and one 45-degree exit cue.
  const offsets=[[-26,22],[24,-18],[-22,26],[22,-20],[-18,10],[22,8],[-24,-12],[18,0]];
+ // Sky Isles cues weave wider between the floating islands.
+ const preludeOffsets=[[-44,12],[46,-26],[-34,30]];
  const forced=[
+  ...WATERFALL_PRELUDE_RING_DISTANCES.map((distance,index)=>({distance,forced:true,normal:{x:0,y:0,z:-1},offset:preludeOffsets[index]})),
   ...WATERFALL_OPENING_RING_DISTANCES.map((distance,index)=>({distance,forced:true,normal:{x:0,y:0,z:-1},offset:offsets[index]})),
   {distance:WATERFALL_APPROACH_RING_DISTANCE,forced:true,normal:{x:0,y:0,z:-1},offset:offsets[3]},
   {distance:WATERFALL_TURN_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2},offset:offsets[4]},
@@ -133,8 +139,8 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
 // gorge slalom, alternating sides, each leaving a clear line past it. Totems: three carved stone pillars on
 // mossy islands in the lower river after the fall. Every hazard starts at its river surface and rises into
 // the flight corridor; grazing one costs a shield; a fireball shatters it.
-export const WATERFALL_SPIRE_DISTANCES=Object.freeze([900,1330,1760,2240]);
-export const WATERFALL_TOTEM_DISTANCES=Object.freeze([5250,5700,6150]);
+export const WATERFALL_SPIRE_DISTANCES=Object.freeze([900,1330,1760,2240].map(d=>d+PRELUDE_LENGTH));
+export const WATERFALL_TOTEM_DISTANCES=Object.freeze([319,769,1219].map(d=>d+FALL_END));
 export function createWaterfallObstacles(){
  const out=[];let index=0;
  for(const distance of WATERFALL_SPIRE_DISTANCES){

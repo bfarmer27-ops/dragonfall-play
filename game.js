@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import {TIER, setTier, readTierSetting} from './quality.js';
 import {createRenderSystem} from './render.js';
 import {createSky} from './sky.js';
-import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=5';
+import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=6';
 import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=3';
 import {createTerrain, terrainHeight, createArchGeometry, createBoulderGeometry, createRockMaterial, worldSlope} from './terrain.js';
 import {createWater} from './water.js';
@@ -115,7 +115,7 @@ if (WATERFALL_MAP) {
  scene.add(waterfallWorld);
  for (const chunk of terrain.chunks || []) chunk.group.visible=false;
  terrain.river.visible=false;
- waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer});
+ waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer,scene,onThunder:near=>audio.thunder(near)});
 }
 const canyonDressing = new THREE.Group();
 scene.add(canyonDressing);

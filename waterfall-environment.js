@@ -1,13 +1,17 @@
-// Emerald Falls: the stationary scenery of the Waterfall map (rebuilt 2026-10-06).
-// A forested sandstone gorge on the upper plateau, the 1,600 m fall into a stone amphitheatre, and a
-// forest lake at the exit. Green vine-and-orb portals are the course gates (createPortal), rock
-// spires and stone totems are the hazards (makeObstacleMesh). Every photo texture is CC0 (Poly Haven:
-// cliff_side, aerial_grass_rock, forest_floor, mossy_rock, bark_willow_02, fir_tree_01 twig). Leaves,
-// mist, glow and the rainbow are drawn here. Nothing is player-relative; nothing is recycled.
+// Emerald Falls: the stationary scenery of the Waterfall map (rebuilt 2026-10-06, round 2).
+// Course: Sky Isles (floating islands over a cloud sea) -> a stone gate -> a forested sandstone gorge ->
+// the 1,600 m fall into a stone amphitheatre -> a forest lake and the finish. Green vine-and-orb portals
+// are the gates (createPortal), rock spires and stone totems the hazards (makeObstacleMesh).
+// Textures and scanned models are Poly Haven CC0; leaves, mist, glow and the rainbow are drawn here.
+// Anti-repeat: every rock and ground texture is sampled twice (a rotated, rescaled copy blended in by a
+// slow noise mask) and swapped for a 95 m tile in the distance, so no tile pattern survives on the walls.
+// Nothing is player-relative; nothing is recycled.
 import * as THREE from './vendor/three.module.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
 import {createSky, setFogConstants, fogUniforms} from './sky.js';
 import {TIER} from './quality.js';
-import {routeAt, FALL_START, FALL_END, ARC_RADIUS, ROUTE_LENGTH, WATERFALL_RIVER_CLEARANCE, ENTRY_TOP_Y} from './waterfall-core.js';
+import {routeAt, FALL_START, FALL_END, ARC_RADIUS, ROUTE_LENGTH, PRELUDE_LENGTH, WATERFALL_RIVER_CLEARANCE, ENTRY_TOP_Y} from './waterfall-core.js';
 
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -16,7 +20,6 @@ export function noise(x, z) {
  const ix = Math.floor(x), iz = Math.floor(z), u = smooth(0, 1, x - ix), v = smooth(0, 1, z - iz);
  return lerp(lerp(hash(ix, iz), hash(ix + 1, iz), u), lerp(hash(ix, iz + 1), hash(ix + 1, iz + 1), u), v);
 }
-// Ridged multifractal (sharp crests, each octave gated by the one below): real ridgelines, not blobs.
 function ridged(x, z, octaves = 4) {
  let amp = 1, freq = 1, sum = 0, weight = 1;
  for (let o = 0; o < octaves; o++) {
@@ -36,77 +39,98 @@ function noise3(x, y, z) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Route-derived layout. The river rounds the same lip as the flight and drops beside the corridor.
+// Layout. The flight starts at z = 0 among the islands; the gorge plateau begins at GORGE_Z.
 // ---------------------------------------------------------------------------------------------
 const lip = routeAt(FALL_START), exit = routeAt(FALL_END);
-export const WORLD_START_Z = 400;
+export const GORGE_Z = -PRELUDE_LENGTH;
+export const WORLD_START_Z = GORGE_Z + 320;             // the plateau's leading cliff rises out of the cloud sea here
 export const FINISH_Z = routeAt(ROUTE_LENGTH).z;         // crossing this plane completes the course
 export const WORLD_END_Z = FINISH_Z - 1400;              // closing hills continue well past the finish
+export const CLOUD_SEA_Y = ENTRY_TOP_Y - 330;
 const riverBendRadius = ARC_RADIUS - 60;   // 60 m clears the full ring plus the animated dragon's body
 export const CURTAIN_Z = lip.z - riverBendRadius;
 export const UPPER_WATER_Y = lip.y - WATERFALL_RIVER_CLEARANCE;
 export const LOWER_WATER_Y = exit.y - WATERFALL_RIVER_CLEARANCE;
 export const CURTAIN_TOP_Y = UPPER_WATER_Y - riverBendRadius;
-export const LAKE_Z = routeAt(ROUTE_LENGTH - 650).z;   // where the lower river opens into the lake
+export const LAKE_Z = routeAt(ROUTE_LENGTH - 650).z;
 
-export function valleyProfile(z) {
- if (z >= lip.z) return {x: 0, y: UPPER_WATER_Y};
- if (z >= CURTAIN_Z) { const forward = lip.z - z; return {x: 0, y: CURTAIN_TOP_Y + Math.sqrt(Math.max(0, riverBendRadius ** 2 - forward ** 2))}; }
- return {x: 0, y: LOWER_WATER_Y};
+// The river wanders under the straight flight line, straightening before the lip and after the foot.
+export function meander(z) {
+ const wave = 28 * Math.sin(z * .0011 + 1.3) + 16 * Math.sin(z * .0027 + .4);
+ if (z > CURTAIN_Z) return wave * smooth(lip.z + 60, lip.z + 380, z) * smooth(GORGE_Z - 60, GORGE_Z - 320, z);
+ return wave * smooth(CURTAIN_Z - 90, CURTAIN_Z - 400, z);
 }
-// Half width of the river (metres from the centre line). Wider pool at the foot, a lake at the end.
+export function valleyProfile(z) {
+ if (z >= lip.z) return {x: meander(z), y: UPPER_WATER_Y};
+ if (z >= CURTAIN_Z) { const forward = lip.z - z; return {x: 0, y: CURTAIN_TOP_Y + Math.sqrt(Math.max(0, riverBendRadius ** 2 - forward ** 2))}; }
+ return {x: meander(z), y: LOWER_WATER_Y};
+}
+// Bends widen the river (the outer bank is cut back), which also keeps the straight flight line over water.
 export function riverWidth(z) {
- return 64 + 35 * Math.exp(-(((z - exit.z) / 240) ** 2)) + 7 * Math.sin(z * .004) ** 2 + 110 * smooth(LAKE_Z + 500, LAKE_Z - 350, z);
+ return 64 + 35 * Math.exp(-(((z - exit.z) / 240) ** 2)) + 7 * Math.sin(z * .004) ** 2 + 110 * smooth(LAKE_Z + 500, LAKE_Z - 350, z) + .6 * Math.abs(meander(z));
 }
 function bankBase(z, q) {
- // Beside the lip the ground stays at plateau level while the river cuts its notch down to the fall.
  const p = valleyProfile(z);
  return z < lip.z && z > CURTAIN_Z ? lerp(p.y, UPPER_WATER_Y, smooth(0, 40, q)) : p.y;
 }
 export function waterfallGroundHeight(x, z) {
  const lower = z <= CURTAIN_Z;
- const p = lower ? {x: 0, y: LOWER_WATER_Y} : valleyProfile(z);
+ const p = lower ? {x: meander(z), y: LOWER_WATER_Y} : valleyProfile(z);
  const a = Math.abs(x - p.x), w = riverWidth(z);
- if (a < w) return p.y - 9 + 4 * noise(x * .03, z * .03) - 6 * smooth(w, w * .3, a);
- const q = a - w;
- const shore = smooth(0, 14, q) * (3 + 6 * noise(x * .03 + 5, z * .03));
- const detail = (noise(x * .16, z * .06) - .5) * 3 + (noise(x * .06, z * .018) - .5) * 14;
  let h;
- if (!lower) {
-  // Upper plateau: a sandstone gorge with terraced walls, forest shelves beyond, mountains far out.
-  const base = bankBase(z, q);
-  const r = ridged(x * .0045 + 3.1, z * .0042, 4);
-  const wallH = 130 + 120 * r + 25 * noise(x * .02, z * .02 + 9);
-  const wall = (1 - Math.exp(-q / 70)) * wallH;
-  // Terraces of varying thickness and offset: a regular stair reads as a woven grid from across the gorge.
-  const band = 11 + 7 * noise(x * .004 + 9, z * .004), off = noise(x * .012 + 2, z * .012) * band;
-  const f = (wall + off) / band, frac = f - Math.floor(f), terrace = (Math.floor(f) + smooth(.55, .95, frac)) * band - off;
-  const strat = lerp(wall, terrace, (.25 + .2 * noise(x * .003, z * .003 + 4)) * smooth(0, 30, q) * (1 - smooth(170, 260, wall)));
-  const shelf = smooth(260, 520, q) * (40 + 55 * noise(x * .006 + 1, z * .006));
-  const mountains = smooth(900, 1500, q) * (320 + 480 * ridged(x * .0014 + 7, z * .0013, 4));
-  h = base + shore + strat + shelf + mountains;
- } else {
-  // Lower canyon: a deep amphitheatre below the fall that opens into a forest lake.
-  const r = ridged(x * .0032 + 1.7, z * .003, 4);
-  const open = smooth(LAKE_Z + 600, LAKE_Z - 400, z);   // 0 in the canyon, 1 at the lake
-  const wallH = (380 + 260 * r) * (1 - .6 * open);
-  const wall = (1 - Math.exp(-q / 85)) * wallH;
-  const band = 13 + 8 * noise(x * .004 + 9, z * .004), off = noise(x * .012 + 2, z * .012) * band;
-  const f = (wall + off) / band, frac = f - Math.floor(f), terrace = (Math.floor(f) + smooth(.55, .95, frac)) * band - off;
-  const strat = lerp(wall, terrace, (.1 + .16 * noise(x * .003, z * .003 + 4)) * smooth(0, 30, q) * (1 - smooth(300, 420, wall)));
-  // The walls beside the fall climb to meet the plateau edge: a horseshoe amphitheatre that fades downstream.
-  const plateauEdge = waterfallGroundHeight(x, CURTAIN_Z + 1);
-  const amphi = smooth(0, 650, q) * smooth(-1100, -60, z - CURTAIN_Z) * Math.max(0, plateauEdge - (p.y + shore + strat));
-  const lakeHills = open * smooth(120, 500, q) * (30 + 40 * noise(x * .007, z * .007 + 3));
-  // Past the finish the lake narrows into hills, so the world never ends in a flat edge.
-  const endRise = smooth(FINISH_Z - 150, WORLD_END_Z + 120, z) * (220 + 380 * ridged(x * .0025 + 2, z * .0025, 4));
-  h = p.y + shore + strat + amphi + lakeHills + endRise;
+ if (a < w) h = p.y - 9 + 4 * noise(x * .03, z * .03) - 6 * smooth(w, w * .3, a);
+ else {
+  const q = a - w;
+  const shore = smooth(0, 14, q) * (3 + 6 * noise(x * .03 + 5, z * .03));
+  const detail = (noise(x * .16, z * .06) - .5) * 3 + (noise(x * .06, z * .018) - .5) * 14;
+  if (!lower) {
+   const base = bankBase(z, q);
+   const r = ridged(x * .0045 + 3.1, z * .0042, 4);
+   const wallH = 130 + 120 * r + 25 * noise(x * .02, z * .02 + 9);
+   // A 16 m shore shelf before the wall climbs, so a level flight above the river never meets rock.
+   const wall = (1 - Math.exp(-Math.max(0, q - 16) / 70)) * wallH;
+   const band = 11 + 7 * noise(x * .004 + 9, z * .004), off = noise(x * .012 + 2, z * .012) * band;
+   const f = (wall + off) / band, frac = f - Math.floor(f), terrace = (Math.floor(f) + smooth(.55, .95, frac)) * band - off;
+   const strat = lerp(wall, terrace, (.25 + .2 * noise(x * .003, z * .003 + 4)) * smooth(0, 30, q) * (1 - smooth(170, 260, wall)));
+   const shelf = smooth(260, 520, q) * (40 + 55 * noise(x * .006 + 1, z * .006));
+   const mountains = smooth(900, 1500, q) * (320 + 480 * ridged(x * .0014 + 7, z * .0013, 4));
+   h = base + shore + strat + shelf + mountains + detail * Math.min(1, q / 12);
+  } else {
+   const r = ridged(x * .0032 + 1.7, z * .003, 4);
+   const open = smooth(LAKE_Z + 600, LAKE_Z - 400, z);
+   const wallH = (380 + 260 * r) * (1 - .6 * open);
+   const wall = (1 - Math.exp(-q / 85)) * wallH;
+   const band = 13 + 8 * noise(x * .004 + 9, z * .004), off = noise(x * .012 + 2, z * .012) * band;
+   const f = (wall + off) / band, frac = f - Math.floor(f), terrace = (Math.floor(f) + smooth(.55, .95, frac)) * band - off;
+   const strat = lerp(wall, terrace, (.1 + .16 * noise(x * .003, z * .003 + 4)) * smooth(0, 30, q) * (1 - smooth(300, 420, wall)));
+   const plateauEdge = waterfallGroundHeight(x, CURTAIN_Z + 1);
+   const amphi = smooth(0, 650, q) * smooth(-1100, -60, z - CURTAIN_Z) * Math.max(0, plateauEdge - (p.y + shore + strat));
+   const lakeHills = open * smooth(120, 500, q) * (30 + 40 * noise(x * .007, z * .007 + 3));
+   const endRise = smooth(FINISH_Z - 150, WORLD_END_Z + 120, z) * (220 + 380 * ridged(x * .0025 + 2, z * .0025, 4));
+   h = p.y + shore + strat + amphi + lakeHills + endRise + detail * Math.min(1, q / 12);
+  }
  }
- return h + detail * Math.min(1, q / 12);
+ // The plateau's leading edge climbs out of the cloud sea over 270 m: a cliff wall facing the islands.
+ if (z > GORGE_Z - 70) { const floor = CLOUD_SEA_Y - 120; h = floor + (h - floor) * smooth(GORGE_Z + 300, GORGE_Z - 70, z); }
+ return h;
 }
 
+// Floating islands of the Sky Isles: centre, top radius, top height. Rings weave between them.
+export const ISLANDS = Object.freeze([
+ {x: -175, z: -300, r: 120, top: 1898, trees: 1, falls: 1},
+ {x: 160, z: -520, r: 140, top: 1926, trees: 1},
+ {x: -165, z: -830, r: 165, top: 1876, trees: 1, temple: 1},
+ {x: -180, z: -1130, r: 125, top: 1956, trees: 1, falls: 1},
+ {x: 195, z: -1400, r: 150, top: 1902, trees: 1},
+ {x: 165, z: -1730, r: 118, top: 1948, trees: 1, falls: 1},
+ {x: -125, z: -1990, r: 100, top: 1888, trees: 1},
+ {x: -520, z: -150, r: 70, top: 1840}, {x: 560, z: -700, r: 60, top: 1990}, {x: -610, z: -1000, r: 80, top: 1930},
+ {x: 520, z: -1250, r: 55, top: 1850}, {x: -480, z: -1600, r: 65, top: 1980}, {x: 600, z: -1950, r: 75, top: 1870},
+].map(Object.freeze));
+function islandTopAt(isl, x, z) { const d = Math.hypot(x - isl.x, z - isl.z) / isl.r; return isl.top + 9 * (1 - d * d) + 3 * noise(x * .05, z * .05); }
+
 // ---------------------------------------------------------------------------------------------
-// Drawn textures: soft mist puff, leaf cluster for shrubs and vine leaves, glow disc for orbs.
+// Drawn textures
 // ---------------------------------------------------------------------------------------------
 function canvasTexture(size, draw) {
  const c = document.createElement('canvas'); c.width = c.height = size;
@@ -118,7 +142,6 @@ function makePuffTexture() {
   const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
   g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(.5, 'rgba(255,255,255,.5)'); g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-  // Break the disc with darker blotches so banks of them read as vapour, not as stacked circles.
   ctx.globalCompositeOperation = 'destination-out';
   for (let i = 0; i < 70; i++) {
    const x = hash(i, 1) * s, y = hash(i, 2) * s, r = 10 + hash(i, 3) * 40;
@@ -134,11 +157,9 @@ function makeGlowTexture() {
   ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
  });
 }
-// A bush of overlapping leaves on a transparent card (alpha-tested like the fir twigs).
 function makeLeafClusterTexture() {
  return canvasTexture(256, (ctx, s) => {
   ctx.clearRect(0, 0, s, s);
-  // A dense, wide, bottom-heavy mass of leaves: from the air it reads as a bush, not a floating gem.
   for (let i = 0; i < 320; i++) {
    const a = hash(i, 11) * Math.PI * 2, r = Math.pow(hash(i, 12), .5) * s * .47;
    const x = s / 2 + Math.cos(a) * r, y = s / 2 + Math.sin(a) * r * .8 + s * .08;
@@ -152,7 +173,6 @@ function makeLeafClusterTexture() {
   }
  });
 }
-// One ivy leaf for the vine rings: a heart-shaped card.
 function makeIvyLeafTexture() {
  return canvasTexture(128, (ctx, s) => {
   ctx.clearRect(0, 0, s, s);
@@ -168,15 +188,15 @@ function makeIvyLeafTexture() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Terrain material: triplanar cliff / meadow / forest-floor blend, strata by height above the local
-// water, wet band, moss, sky fill for the shadow side. aWater = local water level, aBank = metres
-// from the river bank (both per vertex), so one material serves every chunk, spire and totem.
+// Terrain material. aWater = local water level, aBank = metres from the river bank, both per vertex.
+// High tier: two rock sets by region, scree on mid slopes, forest floor on far shelves, and two
+// blended taps per texture (STOCHASTIC) so no repeat pattern shows. Phone: one tap, two sets.
 // ---------------------------------------------------------------------------------------------
 const triGLSL = `
  varying vec3 wPosition; varying vec3 wNormal; varying float vWater; varying float vBank;
  uniform sampler2D cliffColor, cliffNormal, cliffArm, groundColor, groundNormal, groundArm;
- #ifdef FOREST_FLOOR
- uniform sampler2D floorColor;
+ #ifdef RICH_ROCK
+ uniform sampler2D rock2Color, rock2Normal, screeColor, screeNormal, floorColor;
  #endif
  vec3 weights(vec3 n){vec3 w=pow(abs(n),vec3(5.));return w/max(dot(w,vec3(1.)),.001);}
  vec3 sampleTri(sampler2D t,vec3 p,vec3 w){return texture2D(t,p.zy).rgb*w.x+texture2D(t,p.xz).rgb*w.y+texture2D(t,p.xy).rgb*w.z;}
@@ -185,6 +205,15 @@ const triGLSL = `
   a=vec3(a.xy+n.zy,abs(a.z)*n.x);b=vec3(b.xy+n.xz,abs(b.z)*n.y);c=vec3(c.xy+n.xy,abs(c.z)*n.z);
   return normalize(a.zyx*w.x+b.xzy*w.y+c.xyz*w.z);
  }
+ // Second tap: the same texture turned a quarter turn, rescaled and shifted; a slow mask blends the two.
+ vec3 altP(vec3 p){return vec3(-p.z,p.y,p.x)*1.31+vec3(37.,11.,53.);}
+ #ifdef STOCHASTIC
+ vec3 sampleTriS(sampler2D t,vec3 p,vec3 w,float m){return mix(sampleTri(t,p,w),sampleTri(t,altP(p),w),m);}
+ vec3 normalTriS(sampler2D t,vec3 p,vec3 w,vec3 n,float m){return normalize(mix(normalTri(t,p,w,n),normalTri(t,altP(p),w,n),m));}
+ #else
+ vec3 sampleTriS(sampler2D t,vec3 p,vec3 w,float m){return sampleTri(t,p,w);}
+ vec3 normalTriS(sampler2D t,vec3 p,vec3 w,vec3 n,float m){return normalTri(t,p,w,n);}
+ #endif
  float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
   float a=fract(sin(dot(i,vec2(127.1,311.7)))*43758.5453),b=fract(sin(dot(i+vec2(1,0),vec2(127.1,311.7)))*43758.5453);
   float c=fract(sin(dot(i+vec2(0,1),vec2(127.1,311.7)))*43758.5453),d=fract(sin(dot(i+vec2(1,1),vec2(127.1,311.7)))*43758.5453);
@@ -195,10 +224,9 @@ function createTerrainMaterial(maps, high) {
  mat.onBeforeCompile = s => {
   Object.assign(s.uniforms, maps);
   s.defines = s.defines || {};
-  if (high) s.defines.FOREST_FLOOR = 1;
+  if (high) { s.defines.RICH_ROCK = 1; s.defines.STOCHASTIC = 1; }
   s.vertexShader = s.vertexShader
    .replace('#include <common>', '#include <common>\nattribute float aWater;attribute float aBank;varying vec3 wPosition;varying vec3 wNormal;varying float vWater;varying float vBank;')
-   // normalMatrix handles the non-uniform scale of spires and totems; mat3(modelMatrix) would tilt their normals up.
    .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nwPosition=(modelMatrix*vec4(transformed,1.)).xyz;wNormal=normalize(transpose(mat3(viewMatrix))*normalize(normalMatrix*objectNormal));vWater=aWater;vBank=aBank;');
   s.fragmentShader = s.fragmentShader
    .replace('#include <common>', '#include <common>\n' + triGLSL)
@@ -208,14 +236,22 @@ function createTerrainMaterial(maps, high) {
     float grass=smoothstep(.5,.84,gn.y);
     float height=wPosition.y-vWater;
     float viewDist=distance(wPosition,cameraPosition);
-    // Far surfaces use a 95 m tile: the 18 m tile repeated thirty times across a wall reads as woven cloth.
     float farMix=smoothstep(160.,520.,viewDist)*.85;
-    vec3 stone=mix(sampleTri(cliffColor,wPosition/18.,tw),sampleTri(cliffColor,wPosition/95.,tw),farMix);
-    // Fine grain only near the camera: at hundreds of metres a 3 m tile turns into a moire lattice.
+    float tapMask=smoothstep(.3,.7,vnoise(wPosition.xz*.011+wPosition.y*.003));
+    float region=smoothstep(.42,.58,vnoise(wPosition.xz*.0022+5.3)+.15*vnoise(wPosition.xz*.02+1.));
+    vec3 stone=sampleTriS(cliffColor,wPosition/18.,tw,tapMask);
+    #ifdef RICH_ROCK
+     stone=mix(stone,sampleTriS(rock2Color,wPosition/16.,tw,tapMask)*vec3(1.05,1.,.95),region);
+    #endif
+    stone=mix(stone,sampleTri(cliffColor,wPosition/95.,tw),farMix);
     float detailFade=smoothstep(420.,120.,viewDist);
     vec3 fine=sampleTri(cliffColor,wPosition/3.4,tw);stone*=mix(vec3(1.),fine*1.9,.4*detailFade);
-    vec3 meadow=mix(sampleTri(groundColor,wPosition/14.,tw),sampleTri(groundColor,wPosition/80.,tw),farMix)*vec3(.82,1.04,.62);
-    #ifdef FOREST_FLOOR
+    vec3 meadow=sampleTriS(groundColor,wPosition/14.,tw,tapMask)*vec3(.82,1.04,.62);
+    meadow=mix(meadow,sampleTri(groundColor,wPosition/80.,tw)*vec3(.82,1.04,.62),farMix);
+    #ifdef RICH_ROCK
+     float scree=smoothstep(.55,.72,gn.y)*(1.-smoothstep(.8,.9,gn.y))*smoothstep(.35,.65,vnoise(wPosition.xz*.03+8.));
+     vec3 screeC=sampleTriS(screeColor,wPosition/9.,tw,tapMask)*vec3(.95,.92,.85);
+     meadow=mix(meadow,screeC,scree*.85);
      float shelfMask=smoothstep(200.,420.,vBank)*smoothstep(.35,.7,vnoise(wPosition.xz*.012+4.));
      vec3 floorC=sampleTri(floorColor,wPosition/9.,tw)*vec3(1.,.95,.82);
      meadow=mix(meadow,floorC,shelfMask);
@@ -237,14 +273,18 @@ function createTerrainMaterial(maps, high) {
    `)
    .replace('#include <roughnessmap_fragment>', 'float roughnessFactor=clamp(arm.g,.55,1.);roughnessFactor=mix(roughnessFactor,.35,wet*.8);')
    .replace('#include <normal_fragment_maps>', `
-    vec3 wn=normalize(mix(normalTri(cliffNormal,wPosition/18.,tw,gn),normalTri(groundNormal,wPosition/14.,tw,gn),grass));
-    // Flatten the bump detail with distance; far bumps only add a regular shading grid.
+    vec3 wnStone=normalTriS(cliffNormal,wPosition/18.,tw,gn,tapMask);
+    vec3 wnGround=normalTriS(groundNormal,wPosition/14.,tw,gn,tapMask);
+    #ifdef RICH_ROCK
+     wnStone=normalize(mix(wnStone,normalTriS(rock2Normal,wPosition/16.,tw,gn,tapMask),region));
+     wnGround=normalize(mix(wnGround,normalTriS(screeNormal,wPosition/9.,tw,gn,tapMask),scree*.85));
+    #endif
+    vec3 wn=normalize(mix(wnStone,wnGround,grass));
     wn=normalize(mix(wn,gn,farMix*.8));
     normal=normalize((viewMatrix*vec4(wn,0.)).xyz);
    `)
    .replace('#include <aomap_fragment>', `
     float ambientOcclusion=mix(.62,1.,arm.r)*mix(.74,1.,smoothstep(0.,26.,height));
-    // Sky fill for faces turned from the low sun (the HDRI sky alone is too dark), weighted by how much sky they see.
     reflectedLight.indirectDiffuse+=diffuseColor.rgb*vec3(.17,.25,.34)*.75*(.55+.45*gn.y);
     ambientOcclusion*=mix(.45,1.,smoothstep(-.6,.2,gn.y));
     reflectedLight.indirectDiffuse*=ambientOcclusion;
@@ -252,20 +292,17 @@ function createTerrainMaterial(maps, high) {
     reflectedLight.indirectDiffuse+=diffuseColor.rgb*vec3(.8,.78,.55)*.3*bounce;
    `);
  };
- mat.customProgramCacheKey = () => 'emerald-falls-terrain-v5-' + (high ? 'high' : 'phone');
+ mat.customProgramCacheKey = () => 'emerald-falls-terrain-v6-' + (high ? 'high' : 'phone');
  return mat;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Shared vertex/fragment pieces for the drawn-shader materials that must take the global fog.
-// ---------------------------------------------------------------------------------------------
 const fogVertex = `varying vec2 vUv;
  #include <fog_pars_vertex>
  void main(){vUv=uv;vec4 mvPosition=modelViewMatrix*vec4(position,1.);gl_Position=projectionMatrix*mvPosition;
  #include <fog_vertex>
  }`;
 
-export function createWaterfallEnvironment({group, renderer}) {
+export function createWaterfallEnvironment({group, renderer, scene = null, onThunder = null}) {
  const high = TIER === 'high';
  const pending = [], textures = [], materials = [], geometries = [], surfaces = [], animated = [];
  const loader = new THREE.TextureLoader();
@@ -280,13 +317,21 @@ export function createWaterfallEnvironment({group, renderer}) {
   cliffColor: {value: tex(`cliff_side_diff_${cliffSize}.jpg`, true)}, cliffNormal: {value: tex(`cliff_side_nor_gl_${cliffSize}.jpg`)}, cliffArm: {value: tex(`cliff_side_arm_${cliffSize}.jpg`)},
   groundColor: {value: tex('waterfall/aerial_grass_rock_diff_2k.jpg', true)}, groundNormal: {value: tex('waterfall/aerial_grass_rock_nor_gl_2k.jpg')}, groundArm: {value: tex('waterfall/aerial_grass_rock_arm_2k.jpg')},
  };
- if (high) maps.floorColor = {value: tex('waterfall/forest_floor_diff_1k.jpg', true)};
+ if (high) {
+  maps.rock2Color = {value: tex('waterfall/rock_face_03_diff_1k.jpg', true)}; maps.rock2Normal = {value: tex('waterfall/rock_face_03_nor_gl_1k.jpg')};
+  maps.screeColor = {value: tex('waterfall/rocky_terrain_02_diff_1k.jpg', true)}; maps.screeNormal = {value: tex('waterfall/rocky_terrain_02_nor_gl_1k.jpg')};
+  maps.floorColor = {value: tex('waterfall/forest_floor_diff_1k.jpg', true)};
+ }
  const terrainMaterial = createTerrainMaterial(maps, high); materials.push(terrainMaterial);
- function mesh(geo, mat, name) { geometries.push(geo); const m = new THREE.Mesh(geo, mat); m.name = name; group.add(m); return m; }
+ function mesh(geo, mat, name, parent = group) { geometries.push(geo); const m = new THREE.Mesh(geo, mat); m.name = name; parent.add(m); return m; }
+ function withTerrainAttributes(geo, water, bank = 0) {
+  const n = geo.attributes.position.count;
+  geo.setAttribute('aWater', new THREE.BufferAttribute(new Float32Array(n).fill(water), 1));
+  geo.setAttribute('aBank', new THREE.BufferAttribute(new Float32Array(n).fill(bank), 1));
+  return geo;
+ }
 
- // --- Terrain chunks ---------------------------------------------------------------------------
- // 129 columns, dense at the river and sparse 2.6 km out; rows every 10 m; one padding row on each side
- // of a chunk so smoothed normals match the neighbour's (no lighting seam at chunk borders).
+ // --- Terrain chunks (gorge, fall, canyon, lake) ----------------------------------------------------
  const NX = 128, ROW = 10, CHUNK = 260, NZ = CHUNK / ROW;
  const columns = Array.from({length: NX + 1}, (_, i) => { const s = (i - NX / 2) / (NX / 2); return Math.sign(s) * Math.pow(Math.abs(s), 1.7) * 2600; });
  const chunkCount = Math.ceil((WORLD_START_Z - WORLD_END_Z) / CHUNK);
@@ -294,7 +339,7 @@ export function createWaterfallEnvironment({group, renderer}) {
   const start = WORLD_START_Z - chunk * CHUNK, rows = NZ + 3, positions = new Float32Array((NX + 1) * rows * 3), water = new Float32Array((NX + 1) * rows), bank = new Float32Array((NX + 1) * rows);
   let p = 0, k = 0;
   for (let j = -1; j <= NZ + 1; j++) {
-   const z = start - j * ROW, prof = (z <= CURTAIN_Z ? {x: 0, y: LOWER_WATER_Y} : valleyProfile(z)), w = riverWidth(z);
+   const z = start - j * ROW, prof = (z <= CURTAIN_Z ? {x: meander(z), y: LOWER_WATER_Y} : valleyProfile(z)), w = riverWidth(z);
    for (const dx of columns) {
     const x = prof.x + dx;
     positions[p++] = x; positions[p++] = waterfallGroundHeight(x, z); positions[p++] = z;
@@ -319,25 +364,86 @@ export function createWaterfallEnvironment({group, renderer}) {
   surfaces.push({positions: geo.attributes.position, columns: NX + 1, rows: NZ, start, end: start - NZ * ROW});
  }
 
- // --- River: sunset reflections, flow along the course, foam at the banks, white water over the lip ----
+ // --- Sky Isles: floating islands, their vines, side falls, the stone gate and the temple ----------
+ const islandGroup = new THREE.Group(); islandGroup.name = 'sky-isles'; group.add(islandGroup);
+ function islandGeometry(isl, seed) {
+  const R = isl.r, pts = [];
+  // Flat grassy top with a small lip, then a rocky underside tapering to a point far below.
+  const profile = [[0, 12], [.5, 10], [.9, 4], [1.03, -5], [.99, -16], [.98, -.3 * R], [.82, -.7 * R], [.55, -1.15 * R], [.25, -1.6 * R], [0, -1.85 * R]];
+  for (const [f, y] of profile) pts.push(new THREE.Vector2(f * R, y));
+  const geo = new THREE.LatheGeometry(pts, 44), pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+   const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), rad = Math.hypot(x, z);
+   if (rad < 1e-3) continue;
+   const side = smooth(6, -40, y);   // top stays smooth; sides get rocky
+   const bump = 1 + (noise3(x * .02 + seed, y * .02, z * .02) - .5) * .5 * side + (noise3(x * .06, y * .06 + seed, z * .06) - .5) * .18 * side;
+   pos.setXYZ(i, x * bump, y + (side < .5 ? 2.5 * noise(x * .05 + seed, z * .05) : 0), z * bump);
+  }
+  geo.computeVertexNormals();
+  return withTerrainAttributes(geo, isl.top - 40, 420);
+ }
+ const vineGeos = [];
+ const bark = new THREE.MeshStandardMaterial({color: 0x6a5c48, roughness: 1}); materials.push(bark);
+ const barkColor = tex('waterfall/bark_willow_02_diff_1k.jpg', true), barkNormal = tex('waterfall/bark_willow_02_nor_gl_1k.jpg');
+ const vineMat = new THREE.MeshStandardMaterial({map: barkColor, normalMap: barkNormal, normalScale: new THREE.Vector2(1.2, 1.2), color: 0x9c8a6c, roughness: .95, metalness: 0}); materials.push(vineMat);
+ ISLANDS.forEach((isl, i) => {
+  const m = mesh(islandGeometry(isl, i * 3.1), terrainMaterial, 'floating-island-' + i, islandGroup);
+  m.position.set(isl.x, isl.top, isl.z); m.rotation.y = hash(i, 4) * 6;
+  // Hanging vines off the underside.
+  for (let v = 0; v < (isl.r > 90 ? 6 : 3); v++) {
+   const a = hash(i * 9 + v, 21) * Math.PI * 2, len = 60 + hash(v, i) * 120, sway = 12 + hash(v + 3, i) * 25;
+   const start = new THREE.Vector3(isl.x + Math.cos(a) * isl.r * .95, isl.top - 4, isl.z + Math.sin(a) * isl.r * .95);
+   const pts = [start];
+   for (let k = 1; k <= 4; k++) pts.push(new THREE.Vector3(start.x + Math.sin(k * 1.7 + v) * sway * k / 4, start.y - len * k / 4, start.z + Math.cos(k * 1.3 + v) * sway * k / 4));
+   vineGeos.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 1.2 + hash(v, 7) * 1.4, 6, false));
+  }
+ });
+ // The stone gate at the gorge entrance: a weathered ring the rider flies through, with two guardian pillars.
+ {
+  const gateGeo = new THREE.TorusGeometry(110, 15, 10, 64), gp = gateGeo.attributes.position;
+  for (let i = 0; i < gp.count; i++) { const x = gp.getX(i), y = gp.getY(i), z = gp.getZ(i); const n = (noise3(x * .04 + 1, y * .04, z * .04) - .5) * 8; gp.setXYZ(i, x + n, y + n * .7, z + n); }
+  gateGeo.computeVertexNormals();
+  const gate = mesh(withTerrainAttributes(gateGeo, ENTRY_TOP_Y - 320, 0), terrainMaterial, 'stone-gate', islandGroup);
+  gate.position.set(0, ENTRY_TOP_Y, GORGE_Z + 60);
+  for (let v = 0; v < 7; v++) {
+   const a = Math.PI * .15 + v * .3, len = 50 + hash(v, 77) * 80;
+   const start = new THREE.Vector3(Math.cos(a + Math.PI) * 118, ENTRY_TOP_Y + Math.sin(a + Math.PI) * 118, GORGE_Z + 60);
+   const pts = [start]; for (let k = 1; k <= 3; k++) pts.push(new THREE.Vector3(start.x + Math.sin(k + v) * 10 * k, start.y - len * k / 3, start.z + Math.cos(k * 2 + v) * 8));
+   vineGeos.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, 1.4, 6, false));
+  }
+ }
+ // Every hanging vine in one mesh: one draw call instead of eighty.
+ mesh(mergeGeometries(vineGeos, false), vineMat, 'island-vines', islandGroup);
+ for (const g of vineGeos) g.dispose();
+ vineGeos.length = 0;
+
+ // --- River -----------------------------------------------------------------------------------------
  const waterNormal = tex('water_normal_512.png'), fallNoise = tex('noise_512.png');
+ const useReflection = high && !!scene;
+ const reflectTarget = useReflection ? new THREE.WebGLRenderTarget(1024, 512, {type: THREE.HalfFloatType, depthBuffer: true}) : null;
  const riverUniforms = {
-  uTime: {value: 0}, uWaterNormal: {value: waterNormal}, uNoise: {value: fallNoise}, uWaveStrength: {value: high ? .6 : .5},
+  uTime: {value: 0}, uWaterNormal: {value: waterNormal}, uNoise: {value: fallNoise}, uWaveStrength: {value: high ? .55 : .5}, uSwell: {value: high ? 1 : .6},
   uDeep: {value: new THREE.Color(0x0a3a3c)}, uShallow: {value: new THREE.Color(0x2e8d86)}, uFoam: {value: new THREE.Color(0xd6ece6)},
   uLipZ: {value: lip.z}, uCurtainZ: {value: CURTAIN_Z},
+  uReflection: {value: reflectTarget ? reflectTarget.texture : null}, uReflMatrix: {value: new THREE.Matrix4()}, uReflMix: {value: useReflection ? .85 : 0}, uReflDistort: {value: .06},
  };
  const riverMat = new THREE.MeshStandardMaterial({color: 0xffffff, roughness: .1, metalness: 0, envMapIntensity: .9, side: THREE.DoubleSide});
  materials.push(riverMat);
  riverMat.onBeforeCompile = s => {
   Object.assign(s.uniforms, riverUniforms);
+  s.defines = s.defines || {}; if (useReflection) s.defines.WATER_REFLECTION = 1;
   s.vertexShader = s.vertexShader
-   .replace('#include <common>', '#include <common>\nattribute float aShore;attribute float aFlow;varying vec3 riverWorld;varying vec3 riverNormal;varying float vShore;varying float vFlow;')
+   .replace('#include <common>', '#include <common>\nattribute float aShore;attribute float aFlow;uniform float uTime;uniform float uSwell;varying vec3 riverWorld;varying vec3 riverNormal;varying float vShore;varying float vFlow;')
+   // Gentle swells move the surface itself; the normal maps carry the ripples.
+   .replace('#include <begin_vertex>', '#include <begin_vertex>\nfloat swell=(sin(position.x*.045+uTime*1.1)*.5+sin(aFlow*.07-uTime*1.4+position.x*.02)*.45)*uSwell*smoothstep(0.,12.,aShore);transformed+=objectNormal*swell;')
    .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nriverWorld=(modelMatrix*vec4(transformed,1.)).xyz;riverNormal=normalize(mat3(modelMatrix)*objectNormal);vShore=aShore;vFlow=aFlow;');
   s.fragmentShader = s.fragmentShader
    .replace('#include <common>', `#include <common>
     varying vec3 riverWorld;varying vec3 riverNormal;varying float vShore;varying float vFlow;
     uniform float uTime;uniform sampler2D uWaterNormal;uniform sampler2D uNoise;uniform float uWaveStrength;
-    uniform vec3 uDeep;uniform vec3 uShallow;uniform vec3 uFoam;uniform float uLipZ;uniform float uCurtainZ;`)
+    uniform vec3 uDeep;uniform vec3 uShallow;uniform vec3 uFoam;uniform float uLipZ;uniform float uCurtainZ;
+    uniform sampler2D uReflection;uniform mat4 uReflMatrix;uniform float uReflMix;uniform float uReflDistort;
+    vec3 waterNormalAt(vec2 uv,float mask){vec3 a=texture2D(uWaterNormal,uv).xyz*2.-1.;vec3 b=texture2D(uWaterNormal,uv.yx*1.37+vec2(.31,.77)).xyz*2.-1.;return mix(a,b,mask);}`)
    .replace('#include <map_fragment>', `
     float rapids=smoothstep(260.,0.,riverWorld.z-uLipZ)*step(uCurtainZ-1.,riverWorld.z);
     float flow=vFlow*.05-uTime*(.9+rapids*2.5);
@@ -347,7 +453,6 @@ export function createWaterfallEnvironment({group, renderer}) {
     float foamBreak=texture2D(uNoise,vec2(riverWorld.x*.31,flow*.6)).r;
     float foam=smoothstep(5.,0.,vShore)*smoothstep(.5,.8,foamNoise)*smoothstep(.35,.85,foamBreak);
     float rapidFoam=rapids*smoothstep(.42,.72,foamNoise)*(.4+.6*foamBreak);
-    // Faint streaks of current in the open water: thin and rare, never a field of dots.
     float current=smoothstep(.72,.9,texture2D(uNoise,vec2(riverWorld.x*.04,flow*.35)).r)*.06*smoothstep(0.,20.,vShore);
     foam=max(max(foam,rapidFoam),current);
     diffuseColor.rgb=mix(waterCol,uFoam,foam);
@@ -357,9 +462,9 @@ export function createWaterfallEnvironment({group, renderer}) {
     float roughnessFactor=mix(.14,.35,glitter);roughnessFactor=mix(roughnessFactor,.9,foam);
    `)
    .replace('#include <normal_fragment_maps>', `
-    // Long swells (40 m and 14 m) read as water from 120 m up; short ripples alias into a lattice at that height.
-    vec3 n1=texture2D(uWaterNormal,vec2(riverWorld.x*.025,flow*.5)).xyz*2.-1.;
-    vec3 n2=texture2D(uWaterNormal,vec2(riverWorld.x*.07+.3,flow*1.3)).xyz*2.-1.;
+    float tapMask=smoothstep(.3,.7,texture2D(uNoise,riverWorld.xz*.004+vec2(.2,.6)).r);
+    vec3 n1=waterNormalAt(vec2(riverWorld.x*.025,flow*.5),tapMask);
+    vec3 n2=waterNormalAt(vec2(riverWorld.x*.07+.3,flow*1.3),tapMask);
     vec3 nw=normalize(vec3((n1.xy+n2.xy)*uWaveStrength*(1.+rapids*1.2)*(1.-foam*.5),n1.z*n2.z));
     vec3 gN=normalize(riverNormal);vec3 tX=vec3(1.,0.,0.);vec3 tZ=normalize(cross(tX,gN));tX=cross(gN,tZ);
     vec3 worldN=normalize(tX*nw.x+tZ*nw.y+gN*nw.z);
@@ -372,35 +477,40 @@ export function createWaterfallEnvironment({group, renderer}) {
    .replace('#include <lights_fragment_maps>', `
     #include <lights_fragment_maps>
     radiance=min(radiance,vec3(4.));
+    #ifdef WATER_REFLECTION
+     vec4 rUv=uReflMatrix*vec4(riverWorld,1.);
+     rUv.xy+=vec2(worldN.x,worldN.z)*uReflDistort*rUv.w;
+     vec3 reflCol=min(texture2DProj(uReflection,rUv).rgb,vec3(6.));
+     radiance=mix(radiance,reflCol*(1.-foam*.6),uReflMix);
+    #endif
    `);
  };
- riverMat.customProgramCacheKey = () => 'emerald-river-v5';
- // Three grids meet exactly at the level lip and at the waterfall's foot. Five columns across so the
- // bank-distance attribute can shade the shallows and foam. aFlow is the arc length in metres.
+ riverMat.customProgramCacheKey = () => 'emerald-river-v6-' + (useReflection ? 'refl' : 'plain');
+ const riverMeshes = [];
  let flowBase = 0;
+ const across = [-1, -.75, -.5, -.25, 0, .25, .5, .75, 1];
  for (const [start, end] of [[WORLD_START_Z, lip.z], [lip.z, CURTAIN_Z], [CURTAIN_Z, WORLD_END_Z]]) {
-  const n = Math.ceil((start - end) / 9), pos = [], shore = [], flowA = [], uv = [], indices = [];
+  const n = Math.ceil((start - end) / 8), pos = [], shore = [], flowA = [], uv = [], indices = [];
   let flow = flowBase, prev = null;
   for (let j = 0; j <= n; j++) {
    const z = lerp(start, end, j / n), p = valleyProfile(z), w = riverWidth(z);
-   if (start === CURTAIN_Z) p.y = LOWER_WATER_Y;
+   if (start === CURTAIN_Z) { p.y = LOWER_WATER_Y; p.x = meander(z); }
    if (prev) flow += Math.hypot(p.y - prev.y, z - prev.z);
    prev = {y: p.y, z};
-   for (const f of [-1, -.5, 0, .5, 1]) { pos.push(p.x + f * w, p.y, z); shore.push(w * (1 - Math.abs(f))); flowA.push(flow); uv.push((f + 1) / 2, j / n); }
+   for (const f of across) { pos.push(p.x + f * w, p.y, z); shore.push(w * (1 - Math.abs(f))); flowA.push(flow); uv.push((f + 1) / 2, j / n); }
   }
   flowBase = flow;
-  for (let j = 0; j < n; j++) for (let i = 0; i < 4; i++) { const a = j * 5 + i, b = a + 1, c = a + 5, d = c + 1; indices.push(a, b, c, b, d, c); }
+  const cols = across.length;
+  for (let j = 0; j < n; j++) for (let i = 0; i < cols - 1; i++) { const a = j * cols + i, b = a + 1, c = a + cols, d = c + 1; indices.push(a, b, c, b, d, c); }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setAttribute('aShore', new THREE.Float32BufferAttribute(shore, 1)); geo.setAttribute('aFlow', new THREE.Float32BufferAttribute(flowA, 1));
   geo.setIndex(indices); geo.computeVertexNormals();
-  const m = mesh(geo, riverMat, 'stationary-river'); m.receiveShadow = true;
-  surfaces.push({positions: geo.attributes.position, columns: 5, rows: n, start, end});
+  const m = mesh(geo, riverMat, 'stationary-river'); m.receiveShadow = true; riverMeshes.push(m);
+  surfaces.push({positions: geo.attributes.position, columns: cols, rows: n, start, end});
  }
 
- // --- Waterfall sheets: scrolling streak noise, bright sunlit strands, fading into spray at the foot -----
- // uVeil 0: strands and streaks (front sheets). uVeil 1: the soft white mass behind them, so the fall reads
- // as a body of falling water from the foot and the lake, not as a few bright lines.
+ // --- Waterfall sheets, side streams, island falls ---------------------------------------------------
  const makeFallMaterial = veil => new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true,
   uniforms: {...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), uTime: {value: 0}, uNoise: {value: fallNoise}, uSun: {value: new THREE.Color(0xffd7a8)}, uVeil: {value: veil}},
@@ -432,32 +542,69 @@ export function createWaterfallEnvironment({group, renderer}) {
  curtain2.position.set(8, (CURTAIN_TOP_Y + 70 + LOWER_WATER_Y) / 2, CURTAIN_Z + 15);
  const curtainVeil = mesh(new THREE.PlaneGeometry(146, fallHeight, 1, 1), veilMat, 'waterfall-veil');
  curtainVeil.position.set(0, (CURTAIN_TOP_Y + 70 + LOWER_WATER_Y) / 2, CURTAIN_Z + 1);
- // Two side streams spill down the cliff face just outside the main sheet.
  for (const side of [-1, 1]) {
   const ledgeY = CURTAIN_TOP_Y - 240 + side * 60, h = ledgeY - LOWER_WATER_Y;
   const flank = mesh(new THREE.PlaneGeometry(26, h, 1, 1), fallMat, 'waterfall-flank');
   flank.position.set(side * (riverWidth(CURTAIN_Z) + 6), (ledgeY + LOWER_WATER_Y) / 2, CURTAIN_Z + 3);
   flank.rotation.y = -side * .15;
  }
+ for (const isl of ISLANDS.filter(i => i.falls)) {
+  const a = hash(isl.z, 5) * Math.PI * 2, drop = 300;
+  const f = mesh(new THREE.PlaneGeometry(16, drop, 1, 1), fallMat, 'island-fall', islandGroup);
+  f.position.set(isl.x + Math.cos(a) * isl.r * .98, isl.top - 2 - drop / 2, isl.z + Math.sin(a) * isl.r * .98); f.rotation.y = -a + Math.PI / 2;
+ }
 
- // --- Mist, spray, foam, rainbow ----------------------------------------------------------------
+ // --- Cloud sea under the islands, mist, foam, rainbow -------------------------------------------------
+ const cloudSeaMat = new THREE.ShaderMaterial({transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true,
+  uniforms: {...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), uTime: {value: 0}, uSun: {value: new THREE.Vector3(-.18, .21, -.9).normalize()}, uSunColor: {value: new THREE.Color(0xffd7a8)}},
+  vertexShader: `varying vec3 vW;
+   #include <fog_pars_vertex>
+   void main(){vW=(modelMatrix*vec4(position,1.)).xyz;vec4 mvPosition=viewMatrix*vec4(vW,1.);gl_Position=projectionMatrix*mvPosition;
+   #include <fog_vertex>
+   }`,
+  fragmentShader: `varying vec3 vW;uniform float uTime;uniform vec3 uSun;uniform vec3 uSunColor;
+   #include <fog_pars_fragment>
+   float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+   float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+1.),f.x),f.y);}
+   float fbm(vec2 p){float a=.5,s=0.;for(int i=0;i<5;i++){s+=a*vn(p);p=p*2.03+vec2(17.,9.);a*=.5;}return s;}
+   void main(){
+    vec2 p=vW.xz*.0035+vec2(uTime*.008,uTime*.003);
+    p+=.3*vec2(fbm(p*1.4+2.),fbm(p*1.4+7.))-.15;
+    float d=fbm(p);
+    float dens=smoothstep(.36,.62,d);
+    float toward=fbm(p+uSun.xz*.06);
+    float lit=clamp((d-toward)*9.+.35,0.,1.);lit*=lit;
+    vec3 col=mix(vec3(.72,.76,.84),vec3(1.,.93,.82)*1.15,lit);
+    col=mix(col,uSunColor*1.2,smoothstep(.25,.6,dens)*lit*.35);
+    float a=mix(.55,.97,dens);
+    gl_FragColor=vec4(col,a);
+    #include <fog_fragment>
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+   }`});
+ materials.push(cloudSeaMat); animated.push(cloudSeaMat.uniforms.uTime);
+ const cloudSea = mesh(new THREE.PlaneGeometry(14000, 6400, 1, 1), cloudSeaMat, 'cloud-sea', islandGroup);
+ cloudSea.rotation.x = -Math.PI / 2; cloudSea.position.set(0, CLOUD_SEA_Y, -200); cloudSea.renderOrder = -2;
  const puff = makePuffTexture(); textures.push(puff);
  const sprayMat = new THREE.SpriteMaterial({map: puff, color: 0xd9e4e6, transparent: true, opacity: .3, depthWrite: false, fog: true});
  const mistMat = new THREE.SpriteMaterial({map: puff, color: 0xc2d2d6, transparent: true, opacity: .16, depthWrite: false, fog: true});
- materials.push(sprayMat, mistMat);
+ const cloudPuffMat = new THREE.SpriteMaterial({map: puff, color: 0xeef1f4, transparent: true, opacity: .26, depthWrite: false, fog: true});
+ materials.push(sprayMat, mistMat, cloudPuffMat);
  const sprites = [];
- function sprite(mat, x, y, z, sx, sy, drift) { const s = new THREE.Sprite(mat); s.position.set(x, y, z); s.scale.set(sx, sy, 1); s.userData.base = y; s.userData.drift = drift; group.add(s); sprites.push(s); return s; }
+ function sprite(mat, x, y, z, sx, sy, drift, parent = group) { const s = new THREE.Sprite(mat); s.position.set(x, y, z); s.scale.set(sx, sy, 1); s.userData.base = y; s.userData.drift = drift; parent.add(s); sprites.push(s); return s; }
  const pool = riverWidth(CURTAIN_Z - 80);
  for (let i = 0; i < (high ? 8 : 5); i++) sprite(sprayMat, (hash(i, 31) - .5) * pool * 1.6, LOWER_WATER_Y + 25 + hash(i, 32) * 70, CURTAIN_Z - 30 - hash(i, 33) * 140, 150 + hash(i, 34) * 120, 90 + hash(i, 35) * 70, .6 + hash(i, 36));
  for (let i = 0; i < 4; i++) sprite(mistMat, (hash(i, 41) - .5) * 160, LOWER_WATER_Y + 250 + i * 320, CURTAIN_Z - 20, 190, 120, .2);
- for (let i = 0; i < (high ? 12 : 7); i++) { const z = CURTAIN_Z - 260 - i * 150 - hash(i, 51) * 60; sprite(mistMat, (hash(i, 52) - .5) * riverWidth(z) * 1.4, LOWER_WATER_Y + 10 + hash(i, 53) * 12, z, 140 + hash(i, 54) * 110, 18 + hash(i, 55) * 14, .15); }
- for (let i = 0; i < 7; i++) { const z = 250 - i * 330; sprite(mistMat, (hash(i, 61) - .5) * 90, UPPER_WATER_Y + 8 + hash(i, 62) * 8, z, 160 + hash(i, 63) * 90, 14 + hash(i, 64) * 10, .1); }
+ for (let i = 0; i < (high ? 12 : 7); i++) { const z = CURTAIN_Z - 260 - i * 150 - hash(i, 51) * 60; sprite(mistMat, meander(z) + (hash(i, 52) - .5) * riverWidth(z) * 1.4, LOWER_WATER_Y + 10 + hash(i, 53) * 12, z, 140 + hash(i, 54) * 110, 18 + hash(i, 55) * 14, .15); }
+ for (let i = 0; i < 7; i++) { const z = GORGE_Z - 250 - i * 330; sprite(mistMat, meander(z) + (hash(i, 61) - .5) * 90, UPPER_WATER_Y + 8 + hash(i, 62) * 8, z, 160 + hash(i, 63) * 90, 14 + hash(i, 64) * 10, .1); }
+ // Cloud puffs drifting around the islands give the cloud sea some height.
+ for (let i = 0; i < (high ? 26 : 14); i++) { const z = 250 - hash(i, 71) * 2500, x = (hash(i, 72) - .5) * 1500; sprite(cloudPuffMat, x, CLOUD_SEA_Y + 30 + hash(i, 73) * 150, z, 260 + hash(i, 74) * 220, 110 + hash(i, 75) * 70, .25, islandGroup); }
  const foamMat = new THREE.ShaderMaterial({transparent: true, depthWrite: false, fog: true,
   uniforms: {...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), foamNoise: {value: fallNoise}, uTime: {value: 0}},
   vertexShader: fogVertex,
   fragmentShader: `varying vec2 vUv;uniform sampler2D foamNoise;uniform float uTime;
    #include <fog_pars_fragment>
-   void main(){vec2 p=(vUv-.5)*vec2(1.4,2.);float n=texture2D(foamNoise,vUv*2.2+vec2(0.,uTime*.03)).r*.7+texture2D(foamNoise,vUv*5.1-vec2(uTime*.02,0.)).r*.3;float edge=1.-smoothstep(.3,.85,length(p)+n*.2);float a=edge*smoothstep(.3,.78,n)*.5;gl_FragColor=vec4(.82,.95,.9,a);
+   void main(){vec2 p=(vUv-.5)*vec2(1.4,2.);float n=texture2D(foamNoise,vUv*2.2+vec2(0.,uTime*.03)).r*.7+texture2D(foamNoise,vUv*5.1-vec2(uTime*.02,0.)).r*.3;float edge=1.-smoothstep(.3,.85,length(p)+n*.2);float a=edge*smoothstep(.25,.85,n)*.32;gl_FragColor=vec4(.82,.95,.9,a);
    #include <fog_fragment>
    #include <tonemapping_fragment>
    #include <colorspace_fragment>
@@ -479,41 +626,53 @@ export function createWaterfallEnvironment({group, renderer}) {
  const rainbow = mesh(new THREE.RingGeometry(150, 196, 80, 1, 0, Math.PI), rainbowMat, 'rainbow');
  rainbow.position.set(-30, LOWER_WATER_Y + 12, CURTAIN_Z - 200);
 
- // --- Forest: fir cards on the shelves and lake shores, leafy shrubs on the banks, mossy boulders -------
- const bark = new THREE.MeshStandardMaterial({color: 0x6a5c48, roughness: 1});
- const twigColor = tex('waterfall/fir_tree_01_twig_diff_2k.jpg', true), twigAlpha = tex('waterfall/fir_tree_01_twig_alpha_2k.png');
- const leaf = new THREE.MeshStandardMaterial({map: twigColor, alphaMap: twigAlpha, alphaTest: .4, side: THREE.DoubleSide, roughness: .9, color: 0xffffff});
- materials.push(bark, leaf);
- const trunkGeo = new THREE.CylinderGeometry(.13, .32, 1, 6), leafGeo = new THREE.PlaneGeometry(1, 1); geometries.push(trunkGeo, leafGeo);
- const tuv = leafGeo.attributes.uv; for (let i = 0; i < tuv.count; i++) tuv.setXY(i, .64453125 + tuv.getX(i) * .302734375, .619140625 + tuv.getY(i) * .3486328125);
- const dummy = new THREE.Object3D();
+ // --- Placement helpers: ground spots along the shores and shelves, island spots on the tops ----------
  const slopeOk = (x, z, y, limit) => Math.abs(waterfallGroundHeight(x + 3, z) - y) + Math.abs(waterfallGroundHeight(x, z + 3) - y) < limit;
+ function shoreSpot(i, salt, qMin, qMax, power = 1.6, slopeLimit = 7, zone = 'both') {
+  const z = GORGE_Z - 120 - hash(i, salt) * (GORGE_Z - 120 - WORLD_END_Z), p = valleyProfile(z), side = i % 2 ? 1 : -1, w = riverWidth(z);
+  const upper = z > CURTAIN_Z;
+  if (zone === 'upper' && !upper) return null; if (zone === 'lower' && upper) return null;
+  const q = qMin + Math.pow(hash(i, salt + 1), power) * (qMax - qMin);
+  const x = p.x + side * (w + q), y = waterfallGroundHeight(x, z);
+  if (z < lip.z + 20 && z > CURTAIN_Z - 120) return null;
+  if (!slopeOk(x, z, y, slopeLimit)) return null;
+  return {x, y, z, seed: i};
+ }
+ function islandSpot(i, salt, edge = .85) {
+  const big = ISLANDS.filter(k => k.trees), isl = big[i % big.length];
+  const a = hash(i, salt) * Math.PI * 2, r = Math.sqrt(hash(i, salt + 1)) * isl.r * edge;
+  const x = isl.x + Math.cos(a) * r, z = isl.z + Math.sin(a) * r;
+  return {x, y: islandTopAt(isl, x, z), z, seed: i, island: isl};
+ }
+
+ // --- Forest: fir cards and round crowns on shelves, lake shores and island tops -------------------------
  const clusterTex = makeLeafClusterTexture(); textures.push(clusterTex);
  const shrubMat = new THREE.MeshStandardMaterial({map: clusterTex, alphaTest: .45, side: THREE.DoubleSide, roughness: .95}); materials.push(shrubMat);
  const roundGeo = new THREE.PlaneGeometry(1, 1); roundGeo.translate(0, .5, 0); geometries.push(roundGeo);
- const treeBatchCount = high ? 24 : 16, batches = Array.from({length: treeBatchCount}, () => []);
+ const twigColor = tex('waterfall/fir_tree_01_twig_diff_2k.jpg', true), twigAlpha = tex('waterfall/fir_tree_01_twig_alpha_2k.png');
+ const leaf = new THREE.MeshStandardMaterial({map: twigColor, alphaMap: twigAlpha, alphaTest: .4, side: THREE.DoubleSide, roughness: .9, color: 0xffffff}); materials.push(leaf);
+ const trunkGeo = new THREE.CylinderGeometry(.13, .32, 1, 6), leafGeo = new THREE.PlaneGeometry(1, 1); geometries.push(trunkGeo, leafGeo);
+ const tuv = leafGeo.attributes.uv; for (let i = 0; i < tuv.count; i++) tuv.setXY(i, .64453125 + tuv.getX(i) * .302734375, .619140625 + tuv.getY(i) * .3486328125);
+ const dummy = new THREE.Object3D();
+ const treeBatchCount = high ? 26 : 18, batches = Array.from({length: treeBatchCount}, () => []);
  let treeCount = 0;
  const treeTotal = high ? 1500 : 900;
  for (let i = 0; i < treeTotal; i++) {
-  const z = 300 - hash(i, 33) * (300 - WORLD_END_Z), p = valleyProfile(z), side = i % 2 ? 1 : -1, w = riverWidth(z);
+  const z = GORGE_Z - 120 - hash(i, 33) * (GORGE_Z - 120 - WORLD_END_Z), p = valleyProfile(z), side = i % 2 ? 1 : -1, w = riverWidth(z);
   const upper = z > CURTAIN_Z;
-  // Upper plateau: forest shelves 260-900 m from the river; lower canyon: shores and lake slopes 60-520 m.
   const q = upper ? 230 + hash(i, 14) * 700 : 60 + hash(i, 14) * 470;
   const x = p.x + side * (w + q), y = waterfallGroundHeight(x, z);
   if (z < lip.z + 35 && z > CURTAIN_Z - 160) continue;
   if (!slopeOk(x, z, y, 11)) continue;
-  const size = 11 + hash(i, 8) * 15;
-  // Two species: tall firs (twig cards) and round broadleaf crowns (leaf-cluster cards) for a mixed forest.
-  batches[Math.min(treeBatchCount - 1, Math.floor((300 - z) / (300 - WORLD_END_Z) * treeBatchCount))].push({x, y, z, size, seed: i, round: hash(i, 19) < .42});
+  batches[Math.min(treeBatchCount - 1, Math.floor((GORGE_Z - z) / (GORGE_Z - WORLD_END_Z) * (treeBatchCount - 2)))].push({x, y, z, size: 11 + hash(i, 8) * 15, seed: i, round: hash(i, 19) < .42});
   treeCount++;
  }
+ for (let i = 0; i < (high ? 160 : 90); i++) { const s = islandSpot(i, 37, .8); batches[treeBatchCount - 1].push({x: s.x, y: s.y - 1, z: s.z, size: 10 + hash(i, 8) * 13, seed: 5000 + i, round: hash(i, 19) < .5}); treeCount++; }
  batches.forEach((batch, bi) => {
   if (!batch.length) return;
   const firs = batch.filter(t => !t.round), rounds = batch.filter(t => t.round);
   const trees = new THREE.InstancedMesh(trunkGeo, bark, batch.length);
-  batch.forEach((t, i) => {
-   dummy.position.set(t.x, t.y + t.size * .5, t.z); dummy.scale.set(t.size * .32, t.size * (t.round ? .7 : 1), t.size * .32); dummy.rotation.set(0, 0, 0); dummy.updateMatrix(); trees.setMatrixAt(i, dummy.matrix);
-  });
+  batch.forEach((t, i) => { dummy.position.set(t.x, t.y + t.size * .5, t.z); dummy.scale.set(t.size * .32, t.size * (t.round ? .7 : 1), t.size * .32); dummy.rotation.set(0, 0, 0); dummy.updateMatrix(); trees.setMatrixAt(i, dummy.matrix); });
   trees.name = 'fixed-forest-trunks-' + bi; trees.computeBoundingSphere(); group.add(trees);
   if (firs.length) {
    const leaves = new THREE.InstancedMesh(leafGeo, leaf, firs.length * 12);
@@ -542,7 +701,7 @@ export function createWaterfallEnvironment({group, renderer}) {
    crowns.name = 'fixed-forest-crowns-' + bi; crowns.computeBoundingSphere(); group.add(crowns);
   }
  });
- // Shrubs: leaf-cluster cards in a cross, on the banks and the gorge rim where the rider actually looks.
+ // Shrubs on shores, shelves and island tops.
  const crossGeo = new THREE.BufferGeometry();
  {
   const v = [], u = [], nrm = [], ix = [];
@@ -554,17 +713,14 @@ export function createWaterfallEnvironment({group, renderer}) {
   crossGeo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); crossGeo.setAttribute('uv', new THREE.Float32BufferAttribute(u, 2)); crossGeo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3)); crossGeo.setIndex(ix);
  }
  geometries.push(crossGeo);
- const shrubTotal = high ? 900 : 500, shrubItems = [];
- for (let i = 0; i < shrubTotal; i++) {
-  const z = 300 - hash(i, 71) * (300 - WORLD_END_Z), p = valleyProfile(z), side = i % 2 ? 1 : -1, w = riverWidth(z);
-  const q = 4 + Math.pow(hash(i, 72), 1.6) * (z > CURTAIN_Z ? 330 : 420);
-  const x = p.x + side * (w + q), y = waterfallGroundHeight(x, z);
-  if (z < lip.z + 20 && z > CURTAIN_Z - 120) continue;
-  // Shrubs grow on shores and shelves, never on the gorge walls (where they read as floating blobs).
-  if (q > 55 && q < (z > CURTAIN_Z ? 250 : 330)) continue;
-  if (!slopeOk(x, z, y, 7)) continue;
-  shrubItems.push({x, y, z, size: 5 + hash(i, 73) * 9, seed: i});
+ const shrubItems = [];
+ for (let i = 0; i < (high ? 900 : 500); i++) {
+  const s = shoreSpot(i, 71, 4, 330, 1.6, 7); if (!s) continue;
+  const p = valleyProfile(s.z), q = Math.abs(s.x - p.x) - riverWidth(s.z);
+  if (q > 55 && q < (s.z > CURTAIN_Z ? 250 : 330)) continue;
+  shrubItems.push({...s, size: 5 + hash(i, 73) * 9});
  }
+ for (let i = 0; i < (high ? 220 : 120); i++) { const s = islandSpot(i, 79, .9); shrubItems.push({...s, y: s.y - .4, size: 4 + hash(i, 73) * 7}); }
  if (shrubItems.length) {
   const shrubs = new THREE.InstancedMesh(crossGeo, shrubMat, shrubItems.length);
   shrubItems.forEach((s, i) => {
@@ -573,51 +729,132 @@ export function createWaterfallEnvironment({group, renderer}) {
   });
   shrubs.name = 'fixed-shrubs'; shrubs.computeBoundingSphere(); group.add(shrubs);
  }
- // Mossy boulders along the shores (shared geometry, per-instance tint).
- const mossColor = tex('waterfall/mossy_rock_diff_1k.jpg', true), mossNormal = tex('waterfall/mossy_rock_nor_gl_1k.jpg'), mossArm = tex('waterfall/mossy_rock_arm_1k.jpg');
- const boulderMat = new THREE.MeshStandardMaterial({map: mossColor, normalMap: mossNormal, roughnessMap: mossArm, aoMap: mossArm, roughness: 1, metalness: 0}); materials.push(boulderMat);
- const boulderGeo = new THREE.IcosahedronGeometry(1, 2); geometries.push(boulderGeo);
- {
-  const bp = boulderGeo.attributes.position;
-  for (let i = 0; i < bp.count; i++) { const x = bp.getX(i), y = bp.getY(i), z = bp.getZ(i); const r = 1 + (noise3(x * 1.7 + 3, y * 1.7, z * 1.7) - .5) * .5; bp.setXYZ(i, x * r, y * r * .75, z * r); }
-  boulderGeo.computeVertexNormals(); boulderGeo.setAttribute('uv2', boulderGeo.attributes.uv);
- }
- const boulderItems = [];
- for (let i = 0; i < (high ? 360 : 200); i++) {
-  const z = 300 - hash(i, 81) * (300 - WORLD_END_Z), p = valleyProfile(z), side = i % 2 ? 1 : -1, w = riverWidth(z);
-  const q = -6 + Math.pow(hash(i, 82), 1.8) * 260, x = p.x + side * (w + q), y = waterfallGroundHeight(x, z);
-  if (z < lip.z + 20 && z > CURTAIN_Z - 150) continue;
-  // Boulders rest on shores and shelves; a rock glued to a gorge wall looks stuck on, so the wall band is skipped.
-  if (q > 55 && q < (z > CURTAIN_Z ? 250 : 330)) continue;
-  if (q > 10 && !slopeOk(x, z, y, 9)) continue;
-  boulderItems.push({x, y, z, size: 5 + Math.pow(hash(i, 83), 2) * 22, seed: i});
- }
- // Lake islands: big mossy rocks breaking the water between the totems and the finish.
- for (let i = 0; i < 7; i++) {
-  const z = LAKE_Z - 60 - hash(i, 88) * 520, w = riverWidth(z), x = (hash(i, 89) - .5) * (w - 70) * 1.6;
-  boulderItems.push({x, y: LOWER_WATER_Y - 6, z, size: 24 + hash(i, 90) * 22, seed: 900 + i});
- }
- if (boulderItems.length) {
-  const boulders = new THREE.InstancedMesh(boulderGeo, boulderMat, boulderItems.length);
-  boulderItems.forEach((b, i) => {
-   dummy.position.set(b.x, b.y + b.size * .2, b.z); dummy.scale.set(b.size * (0.8 + hash(b.seed, 84) * .5), b.size, b.size * (0.8 + hash(b.seed, 85) * .5)); dummy.rotation.set(0, hash(b.seed, 86) * 6, 0); dummy.updateMatrix(); boulders.setMatrixAt(i, dummy.matrix);
-   const t = hash(b.seed, 87); boulders.setColorAt(i, new THREE.Color().setRGB(.75 + t * .3, .8 + t * .25, .7 + t * .3));
-  });
-  boulders.name = 'fixed-boulders'; boulders.computeBoundingSphere(); group.add(boulders);
- }
 
- // --- Wisps: drifting lantern lights in the forest and over the lake ---------------------------------
+ // --- Scanned models (Poly Haven CC0): rocks, cliff chunks, far mountainsides, ferns, dead trunks --------
+ // Spots are chosen now; the instanced meshes appear when each GLB arrives. A model that fails to load is skipped.
+ const rockSpots = [], cliffSpots = [], mountainSpots = [], fernSpots = [], trunkSpots = [];
+ for (let i = 0; i < (high ? 420 : 110); i++) {
+  const inRiver = hash(i, 90) < .3;
+  if (inRiver) {
+   // Rocks breaking the water near the banks (never inside the flight corridor's ring lines).
+   const z = GORGE_Z - 200 - hash(i, 91) * (GORGE_Z - 200 - WORLD_END_Z), p = valleyProfile(z), w = riverWidth(z), side = i % 2 ? 1 : -1;
+   if (z < lip.z + 200 && z > CURTAIN_Z - 200) continue;
+   const x = p.x + side * (w - 4 - hash(i, 92) * 24), y = (z <= CURTAIN_Z ? LOWER_WATER_Y : p.y) - 3;
+   rockSpots.push({x, y, z, size: 6 + Math.pow(hash(i, 93), 1.6) * 16, seed: i});
+  } else {
+   const s = shoreSpot(i, 95, -6, 260, 1.8, 9); if (!s) continue;
+   const p = valleyProfile(s.z), q = Math.abs(s.x - p.x) - riverWidth(s.z);
+   if (q > 55 && q < (s.z > CURTAIN_Z ? 250 : 330)) continue;
+   rockSpots.push({...s, y: s.y - 1, size: 5 + Math.pow(hash(i, 83), 2) * 24});
+  }
+ }
+ for (let i = 0; i < 7; i++) { const z = LAKE_Z - 60 - hash(i, 88) * 520, w = riverWidth(z), x = meander(z) + (hash(i, 89) - .5) * (w - 70) * 1.6; rockSpots.push({x, y: LOWER_WATER_Y - 8, z, size: 26 + hash(i, 90) * 24, seed: 900 + i}); }
+ for (let i = 0; i < (high ? 120 : 60); i++) { const s = islandSpot(i, 97, 1.0); rockSpots.push({...s, y: s.y - 2, size: 4 + Math.pow(hash(i, 98), 2) * 18}); }
+ // Cliff chunks: big scanned rock masses set into the gorge walls, the canyon walls and the island sides.
+ for (let i = 0; i < (high ? 70 : 26); i++) {
+  const z = GORGE_Z - 150 - hash(i, 101) * (GORGE_Z - 150 - WORLD_END_Z), p = valleyProfile(z), side = i % 2 ? 1 : -1, w = riverWidth(z);
+  if (z < lip.z + 60 && z > CURTAIN_Z - 100) continue;
+  const q = 30 + hash(i, 102) * 240, x = p.x + side * (w + q), y = waterfallGroundHeight(x, z);
+  const size = 70 + hash(i, 103) * 90;
+  cliffSpots.push({x, y: y - size * .25, z, size, yaw: hash(i, 104) * 6.3, tilt: (hash(i, 105) - .5) * .5, seed: i});
+ }
+ ISLANDS.forEach((isl, i) => { for (let k = 0; k < (isl.r > 90 ? 4 : 2); k++) { const a = hash(i * 7 + k, 111) * Math.PI * 2, size = isl.r * (.55 + hash(k, i) * .35); cliffSpots.push({x: isl.x + Math.cos(a) * isl.r * .78, y: isl.top - isl.r * .42 - size * .3, z: isl.z + Math.sin(a) * isl.r * .78, size, yaw: -a + Math.PI / 2 + (hash(k, i + 1) - .5), tilt: (hash(k, i + 2) - .5) * .6, seed: 400 + i * 7 + k}); } });
+ for (let i = 0; i < (high ? 14 : 7); i++) {
+  const z = GORGE_Z - 300 - hash(i, 121) * (GORGE_Z - 300 - WORLD_END_Z), side = i % 2 ? 1 : -1, p = valleyProfile(z);
+  const q = 1000 + hash(i, 122) * 900, x = p.x + side * (riverWidth(z) + q), y = waterfallGroundHeight(x, z), size = 700 + hash(i, 123) * 500;
+  mountainSpots.push({x, y: y - size * .22, z, size, yaw: hash(i, 124) * 6.3, seed: i});
+ }
+ for (let i = 0; i < (high ? 600 : 150); i++) {
+  const s = shoreSpot(i, 131, 2, 60, 1.3, 6); if (s) fernSpots.push({...s, size: 2.6 + hash(i, 132) * 2.2});
+ }
+ for (let i = 0; i < (high ? 220 : 90); i++) { const s = islandSpot(i, 137, .92); fernSpots.push({...s, size: 2.4 + hash(i, 132) * 2}); }
+ for (let i = 0; i < (high ? 36 : 16); i++) {
+  const s = i % 3 === 0 ? islandSpot(i, 141, .8) : shoreSpot(i, 141, 30, 520, 1.2, 8); if (!s) continue;
+  trunkSpots.push({...s, size: 14 + hash(i, 142) * 14, yaw: hash(i, 143) * 6.3});
+ }
+ const gltf = new GLTFLoader();
+ const modelUrl = name => new URL('./assets/waterfall/models/' + name + '.glb', import.meta.url).href;
+ function loadVariants(names) {
+  return Promise.all(names.map(n => new Promise(resolve => gltf.load(modelUrl(n), g => {
+   const out = [];
+   g.scene.updateMatrixWorld(true);
+   g.scene.traverse(o => {
+    if (!o.isMesh) return;
+    const geo = o.geometry.clone(); geo.applyMatrix4(o.matrixWorld); geo.computeBoundingBox();
+    const b = geo.boundingBox, c = new THREE.Vector3(); b.getCenter(c);
+    geo.translate(-c.x, -b.min.y, -c.z); geo.computeBoundingBox();
+    const span = Math.max(b.max.x - b.min.x, b.max.z - b.min.z, b.max.y - b.min.y);
+    const mat = o.material.clone(); mat.side = THREE.FrontSide; mat.roughness = Math.max(.75, mat.roughness ?? 1);
+    for (const t of [mat.map, mat.normalMap, mat.roughnessMap, mat.aoMap, mat.metalnessMap]) if (t) { t.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy()); textures.push(t); }
+    geometries.push(geo); materials.push(mat);
+    out.push({geometry: geo, material: mat, span, name: n});
+   });
+   resolve(out);
+  }, undefined, e => { console.warn('Emerald Falls: model ' + n + ' skipped: ' + (e && e.message || e)); resolve([]); }))))
+   .then(lists => lists.flat());
+ }
+ function instanceSpots(variants, spots, name, {tintJitter = .2, settle = 0} = {}) {
+  if (!variants.length || !spots.length) return;
+  const byVariant = variants.map(() => []);
+  spots.forEach((s, i) => byVariant[Math.floor(hash(s.seed, 151 + i) * variants.length) % variants.length].push(s));
+  variants.forEach((v, vi) => {
+   const list = byVariant[vi]; if (!list.length) return;
+   const m = new THREE.InstancedMesh(v.geometry, v.material, list.length);
+   list.forEach((s, i) => {
+    const k = s.size / v.span;
+    dummy.position.set(s.x, s.y - settle * s.size, s.z); dummy.scale.set(k, k * (.85 + hash(s.seed, 152) * .3), k);
+    dummy.rotation.set((s.tilt || 0) * (hash(s.seed, 153) - .5) * 2, s.yaw ?? hash(s.seed, 154) * 6.3, (s.tilt || 0) * (hash(s.seed, 155) - .5) * 2);
+    dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
+    const t = 1 - tintJitter / 2 + hash(s.seed, 156) * tintJitter; m.setColorAt(i, new THREE.Color().setRGB(t, t * (1 - tintJitter * .15), t * (1 - tintJitter * .3)));
+   });
+   m.name = name + '-' + v.name; m.computeBoundingSphere(); group.add(m);
+  });
+ }
+ const modelsReady = Promise.all([
+  loadVariants(['rock_moss_set_01', 'rock_moss_set_02', 'namaqualand_boulder_02', 'rock_09', 'boulder_01']).then(v => instanceSpots(v, rockSpots, 'scanned-rocks', {tintJitter: .3})),
+  loadVariants(['namaqualand_cliff_02', 'coastal_cliff_02', 'rock_face_01', 'rock_face_02']).then(v => instanceSpots(v, cliffSpots, 'scanned-cliffs', {tintJitter: .25})),
+  loadVariants(['mountainside']).then(v => instanceSpots(v, mountainSpots, 'scanned-mountains', {tintJitter: .2})),
+  loadVariants(['fern_02']).then(v => instanceSpots(v, fernSpots, 'scanned-ferns', {tintJitter: .35})),
+  loadVariants(['dead_tree_trunk_02']).then(v => instanceSpots(v, trunkSpots, 'scanned-trunks', {tintJitter: .25})),
+ ]);
+
+ // --- Temple ruins on the big island, wisps, birds ----------------------------------------------------------
+ function latheWithNoise(profile, seed, segments = 40) {
+  const geo = new THREE.LatheGeometry(profile, segments); const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i); const rr = 1 + (noise3(x * 1.4 + seed, y * 5 + seed, z * 1.4) - .5) * .5; p.setXYZ(i, x * rr, y, z * rr); }
+  geo.computeVertexNormals(); geometries.push(geo); return geo;
+ }
+ const spireProfile = [], totemProfile = [];
+ for (let i = 0; i <= 14; i++) { const t = i / 14; spireProfile.push(new THREE.Vector2(2 * Math.pow(1 - t, .62) * (.72 + .28 * Math.sin(t * 9)) + .05, t - .5)); }
+ for (let i = 0; i <= 18; i++) {
+  const t = i / 18; let rr = t < .07 ? 5 - t * 40 : 2.2 - t * .9;
+  if (t > .3 && t < .36) rr *= .78; if (t > .55 && t < .61) rr *= .78; if (t > .8 && t < .85) rr *= .8;
+  totemProfile.push(new THREE.Vector2(Math.max(.3, rr), t - .5));
+ }
+ const spireGeo = latheWithNoise(spireProfile, 3), totemGeo = latheWithNoise(totemProfile, 9, 24);
+ {
+  const isl = ISLANDS.find(i => i.temple);
+  const pillarGeo = withTerrainAttributes(totemGeo.clone(), isl.top - 60, 0); geometries.push(pillarGeo);
+  for (let k = 0; k < 9; k++) {
+   const a = k / 9 * Math.PI * 2, x = isl.x + Math.cos(a) * 68, z = isl.z + Math.sin(a) * 68, h = k % 4 === 2 ? 18 : 34 + hash(k, 161) * 8;
+   const m = mesh(pillarGeo, terrainMaterial, 'temple-pillar', islandGroup); m.position.set(x, islandTopAt(isl, x, z) + h / 2 - 2, z); m.scale.set(2.6, h, 2.6); m.rotation.y = hash(k, 162) * 6;
+  }
+  const dais = mesh(withTerrainAttributes(new THREE.CylinderGeometry(58, 64, 6, 36), isl.top - 60, 0), terrainMaterial, 'temple-dais', islandGroup); dais.position.set(isl.x, isl.top + 8, isl.z);
+  const archGeo = new THREE.TorusGeometry(42, 4.5, 8, 40, Math.PI); const ap = archGeo.attributes.position;
+  for (let i = 0; i < ap.count; i++) { const x = ap.getX(i), y = ap.getY(i), z = ap.getZ(i); const n = (noise3(x * .1, y * .1, z * .1) - .5) * 2.5; ap.setXYZ(i, x + n, y + n, z + n); }
+  archGeo.computeVertexNormals();
+  const arch = mesh(withTerrainAttributes(archGeo, isl.top - 60, 0), terrainMaterial, 'temple-arch', islandGroup); arch.position.set(isl.x, isl.top + 10, isl.z - 70); arch.rotation.y = .4;
+ }
  const glowTex = makeGlowTexture(); textures.push(glowTex);
  {
-  const count = high ? 420 : 220, pos = [], seed = [];
+  const count = high ? 520 : 260, pos = [], seed = [];
   for (let i = 0; i < count; i++) {
-   const z = 200 - hash(i, 91) * (200 - WORLD_END_Z), p = routeAt(0), prof = valleyProfile(z);
-   const side = hash(i, 92) < .5 ? -1 : 1, x = prof.x + side * (20 + hash(i, 93) * 220);
-   // Hover between 10 m and 90 m above the local water, skipping the vertical fall itself.
-   if (z < lip.z + 40 && z > CURTAIN_Z - 200) continue;
-   const water = z <= CURTAIN_Z ? LOWER_WATER_Y : prof.y;
+   const prelude = i % 3 === 0;
+   const z = prelude ? 150 - hash(i, 91) * 2250 : GORGE_Z - 100 - hash(i, 91) * (GORGE_Z - 100 - WORLD_END_Z);
+   const prof = valleyProfile(z), side = hash(i, 92) < .5 ? -1 : 1, x = prelude ? (hash(i, 93) - .5) * 700 : prof.x + side * (20 + hash(i, 93) * 220);
+   if (!prelude && z < lip.z + 40 && z > CURTAIN_Z - 200) continue;
+   const water = prelude ? ENTRY_TOP_Y - 120 : (z <= CURTAIN_Z ? LOWER_WATER_Y : prof.y);
    pos.push(x, water + 10 + hash(i, 94) * 80, z); seed.push(hash(i, 95) * 6.28, .6 + hash(i, 96), .3 + hash(i, 97) * .7);
-   void p;
   }
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('aSeed', new THREE.Float32BufferAttribute(seed, 3)); geometries.push(geo);
   const mat = new THREE.ShaderMaterial({transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: true,
@@ -639,8 +876,6 @@ export function createWaterfallEnvironment({group, renderer}) {
   materials.push(mat); animated.push(mat.uniforms.uTime);
   const wisps = new THREE.Points(geo, mat); wisps.name = 'forest-wisps'; wisps.frustumCulled = false; group.add(wisps);
  }
-
- // --- Birds: two slow flocks, one over the plateau gorge, one over the lake ---------------------------
  const birdMat = new THREE.ShaderMaterial({side: THREE.DoubleSide, fog: true,
   uniforms: {...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), uTime: {value: 0}},
   vertexShader: `attribute float aFlap;attribute float aPhase;uniform float uTime;
@@ -657,7 +892,7 @@ export function createWaterfallEnvironment({group, renderer}) {
    }`});
  materials.push(birdMat); animated.push(birdMat.uniforms.uTime);
  const flocks = [];
- for (const [cx, cy, cz, radius] of [[0, UPPER_WATER_Y + 260, -1300, 260], [-60, LOWER_WATER_Y + 220, LAKE_Z - 150, 320]]) {
+ for (const [cx, cy, cz, radius] of [[0, ENTRY_TOP_Y + 120, -900, 420], [0, UPPER_WATER_Y + 260, GORGE_Z - 1300, 260], [-60, LOWER_WATER_Y + 220, LAKE_Z - 150, 320]]) {
   const pos = [], flap = [], phase = [], count = high ? 18 : 10;
   for (let i = 0; i < count; i++) {
    const x = (hash(i, 2) - .5) * 120, y = (hash(i, 8) - .5) * 60, z = (hash(i, 1) - .5) * 160, s = 1.6 + hash(i, 4);
@@ -670,9 +905,6 @@ export function createWaterfallEnvironment({group, renderer}) {
  }
 
  // --- Vine-and-orb portals (the course gates) ----------------------------------------------------------
- const barkColor = tex('waterfall/bark_willow_02_diff_1k.jpg', true), barkNormal = tex('waterfall/bark_willow_02_nor_gl_1k.jpg');
- const vineMat = new THREE.MeshStandardMaterial({map: barkColor, normalMap: barkNormal, normalScale: new THREE.Vector2(1.2, 1.2), color: 0x9c8a6c, roughness: .95, metalness: 0});
- materials.push(vineMat);
  const ivyTex = makeIvyLeafTexture(); textures.push(ivyTex);
  const ivyMat = new THREE.MeshStandardMaterial({map: ivyTex, alphaTest: .45, side: THREE.DoubleSide, roughness: .85, color: 0xffffff}); materials.push(ivyMat);
  const ivyGeo = new THREE.PlaneGeometry(1, 1); ivyGeo.translate(0, .5, 0); geometries.push(ivyGeo);
@@ -683,7 +915,6 @@ export function createWaterfallEnvironment({group, renderer}) {
  for (const set of Object.values(orbMats)) materials.push(set.orb, set.core, set.glow, set.points);
  const orbGeo = new THREE.SphereGeometry(1, 32, 20), coreGeo = new THREE.SphereGeometry(.42, 16, 10); geometries.push(orbGeo, coreGeo);
  const portals = [];
- // Builds one portal: the ring lies in the XY plane and faces -Z (the game orients the group along the ring normal).
  function createPortal({radius = 24, bonus = false, seed = 0} = {}) {
   const set = bonus ? orbMats.gold : orbMats.green;
   const g = new THREE.Group(); g.name = bonus ? 'golden-orb-portal' : 'orb-portal';
@@ -725,32 +956,16 @@ export function createWaterfallEnvironment({group, renderer}) {
  }
  const portalLights = [];
  if (high) for (let i = 0; i < 2; i++) { const l = new THREE.PointLight(0x5cff9a, 0, 150, 1.4); l.name = 'portal-light'; group.add(l); portalLights.push(l); }
+ // Storm flash light: created now at zero so the light count never changes (a change recompiles every shader).
+ const flashLight = new THREE.DirectionalLight(0xdfe8ff, 0); flashLight.position.set(-300, 900, 200); flashLight.name = 'lightning'; group.add(flashLight, flashLight.target);
 
- // --- Hazard meshes: rock spires (gorge slalom) and carved totems on mossy islands (lower river) ---------
- function latheWithNoise(profile, seed, segments = 40) {
-  const geo = new THREE.LatheGeometry(profile, segments); const p = geo.attributes.position;
-  for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i); const rr = 1 + (noise3(x * 1.4 + seed, y * 5 + seed, z * 1.4) - .5) * .5; p.setXYZ(i, x * rr, y, z * rr); }
-  geo.computeVertexNormals(); geometries.push(geo); return geo;
- }
- const spireProfile = [], totemProfile = [];
- for (let i = 0; i <= 14; i++) { const t = i / 14; spireProfile.push(new THREE.Vector2(2 * Math.pow(1 - t, .62) * (.72 + .28 * Math.sin(t * 9)) + .05, t - .5)); }
- for (let i = 0; i <= 18; i++) {
-  const t = i / 18; let rr = t < .07 ? 5 - t * 40 : 2.2 - t * .9;
-  if (t > .3 && t < .36) rr *= .78; if (t > .55 && t < .61) rr *= .78; if (t > .8 && t < .85) rr *= .8;
-  totemProfile.push(new THREE.Vector2(Math.max(.3, rr), t - .5));
- }
- const spireGeo = latheWithNoise(spireProfile, 3), totemGeo = latheWithNoise(totemProfile, 9, 24);
  function makeObstacleMesh(hazard) {
   const base = hazard.kind === 'totem' ? totemGeo : spireGeo;
-  const geo = base.clone(); geometries.push(geo);
-  const n = geo.attributes.position.count;
-  geo.setAttribute('aWater', new THREE.BufferAttribute(new Float32Array(n).fill(hazard.base), 1));
-  geo.setAttribute('aBank', new THREE.BufferAttribute(new Float32Array(n), 1));
+  const geo = withTerrainAttributes(base.clone(), hazard.base, 0); geometries.push(geo);
   const m = new THREE.Mesh(geo, terrainMaterial); m.name = hazard.kind === 'totem' ? 'stone-totem' : 'rock-spire';
   return m;
  }
 
- // --- Collect bursts: an expanding glow when an orb is caught -------------------------------------------
  const burstMat = new THREE.SpriteMaterial({map: glowTex, color: 0x9dffc4, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending}); materials.push(burstMat);
  const bursts = [];
  for (let i = 0; i < 4; i++) { const s = new THREE.Sprite(burstMat.clone()); materials.push(s.material); s.visible = false; s.name = 'orb-burst'; group.add(s); bursts.push({sprite: s, t: 1, color: new THREE.Color()}); }
@@ -759,11 +974,11 @@ export function createWaterfallEnvironment({group, renderer}) {
   b.t = 0; b.sprite.position.copy(position); b.sprite.material.color.setHex(colorHex); b.sprite.visible = true;
  }
 
- const ready = Promise.all(pending).then(() => { group.userData.assetsReady = true; });
+ const texturesReady = Promise.all(pending);
+ const ready = Promise.all([texturesReady, modelsReady]).then(() => { group.userData.assetsReady = true; });
  ready.catch(e => { group.userData.assetError = String(e?.message || e); });
- group.userData = {...group.userData, forestTrees: treeCount, shrubs: shrubItems.length, boulders: boulderItems.length, textureSize: high ? 2048 : 1024, stationary: true, portals: 0};
+ group.userData = {...group.userData, forestTrees: treeCount, shrubs: shrubItems.length, rocks: rockSpots.length, cliffs: cliffSpots.length, ferns: fernSpots.length, islands: ISLANDS.length, textureSize: high ? 2048 : 1024, stationary: true, reflection: useReflection};
 
- // Highest rendered surface under the whole footprint (terrain and water cells), or -Infinity.
  function surfaceHeight(x, z, radius = 24) {
   let top = -Infinity;
   for (const s of surfaces) {
@@ -779,8 +994,49 @@ export function createWaterfallEnvironment({group, renderer}) {
   return top;
  }
 
+ // --- Planar reflection (high tier): the scene mirrored in the water plane, rendered before the frame ----
+ const mirrorCamera = new THREE.PerspectiveCamera();
+ const _plane = new THREE.Plane(), _normal = new THREE.Vector3(0, 1, 0), _view = new THREE.Vector3(), _target = new THREE.Vector3(), _camPos = new THREE.Vector3(), _q = new THREE.Vector4(), _clip = new THREE.Vector4(), _rot = new THREE.Matrix4(), _look = new THREE.Vector3(), _point = new THREE.Vector3();
+ const _texMatrix = new THREE.Matrix4();
+ function renderReflection(camera, waterY) {
+  if (!useReflection) return;
+  _point.set(0, waterY, 0);
+  camera.getWorldPosition(_camPos);
+  if (_camPos.y < waterY + 2) { riverUniforms.uReflMix.value = 0; return; }   // below the surface: no mirror
+  riverUniforms.uReflMix.value = .85;
+  _rot.extractRotation(camera.matrixWorld);
+  _view.subVectors(_camPos, _point).reflect(_normal).negate().add(_point);
+  _look.set(0, 0, -1).applyMatrix4(_rot).add(_camPos);
+  _target.subVectors(_look, _point).reflect(_normal).negate().add(_point);
+  mirrorCamera.position.copy(_view);
+  mirrorCamera.up.set(0, 1, 0).applyMatrix4(_rot).reflect(_normal);
+  mirrorCamera.lookAt(_target);
+  mirrorCamera.fov = camera.fov; mirrorCamera.aspect = camera.aspect; mirrorCamera.near = camera.near; mirrorCamera.far = camera.far;
+  mirrorCamera.updateProjectionMatrix(); mirrorCamera.updateMatrixWorld();
+  _texMatrix.set(.5, 0, 0, .5, 0, .5, 0, .5, 0, 0, .5, .5, 0, 0, 0, 1);
+  _texMatrix.multiply(mirrorCamera.projectionMatrix).multiply(mirrorCamera.matrixWorldInverse);
+  riverUniforms.uReflMatrix.value.copy(_texMatrix);
+  // Oblique near plane: clip everything under the water so the mirror shows only what is above it.
+  _plane.setFromNormalAndCoplanarPoint(_normal, _point).applyMatrix4(mirrorCamera.matrixWorldInverse);
+  _clip.set(_plane.normal.x, _plane.normal.y, _plane.normal.z, _plane.constant);
+  const pm = mirrorCamera.projectionMatrix;
+  _q.x = (Math.sign(_clip.x) + pm.elements[8]) / pm.elements[0];
+  _q.y = (Math.sign(_clip.y) + pm.elements[9]) / pm.elements[5];
+  _q.z = -1; _q.w = (1 + pm.elements[10]) / pm.elements[14];
+  _clip.multiplyScalar(2 / _clip.dot(_q));
+  pm.elements[2] = _clip.x; pm.elements[6] = _clip.y; pm.elements[10] = _clip.z + 1 - .0005; pm.elements[14] = _clip.w;
+  for (const m of riverMeshes) m.visible = false;
+  foam.visible = false;
+  const target = renderer.getRenderTarget(), xr = renderer.xr.enabled, shadows = renderer.shadowMap.autoUpdate;
+  renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = false;
+  renderer.setRenderTarget(reflectTarget); renderer.clear(); renderer.render(scene, mirrorCamera);
+  renderer.setRenderTarget(target); renderer.xr.enabled = xr; renderer.shadowMap.autoUpdate = shadows;
+  for (const m of riverMeshes) m.visible = true;
+  foam.visible = true;
+ }
+
  const _v = new THREE.Vector3();
- let lastTime = 0;
+ let lastTime = 0, nextFlash = 18 + Math.random() * 20, flashAt = -1, thunderAt = -1, thunderNear = .5;
  function update(time, flight, camera) {
   const dt = clamp(time - lastTime, 0, .1); lastTime = time;
   riverUniforms.uTime.value = time;
@@ -805,24 +1061,35 @@ export function createWaterfallEnvironment({group, renderer}) {
    b.t = Math.min(1, b.t + dt * 1.6);
    const s = 12 + b.t * 150; b.sprite.scale.set(s, s, 1); b.sprite.material.opacity = (1 - b.t) * .9;
   }
+  // Storm lightning: two quick flashes from the cloud wall every 20-45 s, thunder 1.5-4 s later by distance.
+  if (time > nextFlash) { flashAt = time; nextFlash = time + 20 + Math.random() * 25; thunderNear = .35 + Math.random() * .65; thunderAt = time + 1.2 + (1 - thunderNear) * 3; }
+  if (flashAt >= 0) {
+   const f = time - flashAt;
+   flashLight.intensity = f < .08 ? 7 : f < .16 ? 1.5 : f < .26 ? 5 : f < .4 ? 1 : 0;
+   if (f > .45) flashAt = -1;
+  }
+  if (thunderAt >= 0 && time > thunderAt) { thunderAt = -1; if (onThunder) onThunder(thunderNear); }
+  if (camera && flight) renderReflection(camera, flight.z > CURTAIN_Z - 20 ? UPPER_WATER_Y : LOWER_WATER_Y);
  }
 
  function dispose() {
-  for (const g of geometries) g.dispose(); for (const m of materials) m.dispose(); for (const t of textures) t.dispose();
+  for (const g of geometries) g.dispose(); for (const g of vineGeos) g.dispose(); for (const m of materials) m.dispose(); for (const t of textures) t.dispose();
+  if (reflectTarget) reflectTarget.dispose();
   group.clear();
  }
- return {ready, terrainMaterial, textures, surfaceHeight, createPortal, makeObstacleMesh, burst, portals, update, dispose};
+ return {ready, terrainMaterial, textures, surfaceHeight, createPortal, makeObstacleMesh, burst, portals, update, dispose, islands: ISLANDS};
 }
 
 // ---------------------------------------------------------------------------------------------
-// Sky: the canyon's film sky (kiara_8_sunset HDRI, storm-cloud wall, sun disc) with near-uniform fog
-// so both the 1,940 m plateau and the river 1,600 m below sit in the same golden haze. The cloud ceiling
-// stays above the plateau instead of following the rider down the fall.
+// Sky: the canyon's film sky (kiara_8_sunset HDRI, storm-cloud wall, sun disc) with near-uniform fog.
+// The cloud ceiling stays above the plateau instead of following the rider down the fall.
 // ---------------------------------------------------------------------------------------------
 export function createWaterfallSky({scene, renderer}) {
- setFogConstants({falloff: .00035, start: 14, height: 0});
- fogUniforms.fogColor.value.setHex(0x5e7284);
- fogUniforms.fogDensity.value = .00052;
+ // Near-uniform fog (falloff .00008 = thins by 1/e every 12 km) so the 2 km plateau wall seen from the islands
+ // sinks into blue haze instead of standing as a flat brown backdrop; the gorge walls 70-500 m away stay crisp.
+ setFogConstants({falloff: .00008, start: 14, height: 0});
+ fogUniforms.fogColor.value.setHex(0x66798c);
+ fogUniforms.fogDensity.value = .00066;
  const sky = createSky({renderer, scene});
  sky.hemiLight.intensity = 1.0;
  sky.hemiLight.color.setHex(0x8db0c6); sky.hemiLight.groundColor.setHex(0x3b4a2c);

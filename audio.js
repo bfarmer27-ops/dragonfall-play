@@ -85,6 +85,11 @@ export function createAudio(){
    tone({freq:660*k,to:700*k,duration:.32,type:'sine',level:.22});tone({freq:990*k,to:1050*k,duration:.42,type:'triangle',level:.14,delay:.07});
    if(gold){tone({freq:1320*k,to:1400*k,duration:.6,type:'sine',level:.12,delay:.14});}
    burst({kind:'pink',duration:.55,from:400,to:2600,level:.22,q:.9,toReverb:true});},
+  // Storm thunder (Emerald Falls): a crack, then a long rumble. near = 1 right overhead, 0 far away.
+  thunder(near=.5){if(!ctx||!enabled)return;const n=Math.max(.1,Math.min(1,near));
+   burst({kind:'white',duration:.18,from:2600,to:500,level:.25*n,q:.5,delay:0});
+   burst({kind:'brown',duration:2.4+n*1.2,from:140,to:35,type:'lowpass',level:.55*n,toReverb:true,delay:.08});
+   burst({kind:'brown',duration:1.8,from:90,to:30,type:'lowpass',level:.3*n,delay:.9});},
   // A missed orb: a short low drop so the lost streak is heard, not only read.
   orbMiss(){if(!ctx||!enabled)return;tone({freq:300,to:140,duration:.3,type:'triangle',level:.12,toReverb:false});},
  };

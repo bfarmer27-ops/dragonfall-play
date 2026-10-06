@@ -7,7 +7,7 @@
   <meta name="description" content="Dragonfall Waterfall Map: a level two-thumb approach and smooth, manually controlled waterfall descent.">
   <link rel="icon" href="data:,">
   <title>Dragonfall — Waterfall Map · Two Thumb</title>
-  <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/","./waterfall-core.js":"./waterfall-core.js?v=15","./flight.js":"./flight.js?v=15","./dragon-norberto.js":"./dragon-norberto.js?v=3","./net.js":"./net.js?v=12","./render.js":"./render.js?v=11","./terrain.js":"./terrain.js?v=11","./sky.js":"./sky.js?v=11","./audio.js":"./audio.js?v=2","./fireball.js":"./fireball.js?v=2"}}</script>
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/","./waterfall-core.js":"./waterfall-core.js?v=16","./flight.js":"./flight.js?v=15","./dragon-norberto.js":"./dragon-norberto.js?v=3","./net.js":"./net.js?v=12","./render.js":"./render.js?v=11","./terrain.js":"./terrain.js?v=11","./sky.js":"./sky.js?v=11","./audio.js":"./audio.js?v=3","./fireball.js":"./fireball.js?v=2"}}</script>
   <link rel="stylesheet" href="./style.css?v=11">
 </head>
 <body>
@@ -41,7 +41,7 @@
   <p id="mic-state" class="mic-state" hidden></p>
   <div class="telemetry" id="telemetry"><span><b id="speed">0</b> <small>KM/H</small></span><span class="horizon-line"></span><span><b id="altitude">0</b> <small>M ALTITUDE</small></span></div>
   <section id="intro" class="intro">
-   <div class="intro-title"><p>EMERALD FALLS</p><h1>DRAGONFALL</h1><div class="title-line"></div><p class="subtitle">Catch the green orbs. Ride the fall.</p></div>
+   <div class="intro-title"><p>EMERALD FALLS</p><h1>DRAGONFALL</h1><div class="title-line"></div><p class="subtitle">Cross the Sky Isles. Catch the orbs. Ride the fall.</p></div>
    <div class="launch-panel">
     <div class="instructions"><div><b id="climb-gesture">↓ ↓</b><span>CLIMB</span></div><div><b id="dive-gesture">↑ ↑</b><span>DIVE</span></div><div><b id="bank-left-gesture">↓ ↑</b><span>BANK LEFT</span></div><div><b id="bank-right-gesture">↑ ↓</b><span>BANK RIGHT</span></div></div>
     <button id="start" class="primary-button">TAKE FLIGHT <span>↗</span></button>
@@ -83,5 +83,5 @@
  </main>
  <!-- PeerJS (window.Peer) must load before the game module: net.js reads it when you host or join. -->
  <script src="./vendor/peerjs.min.js"></script>
- <script type="module" src="./private-access.js?v=4"></script>
+ <script type="module" src="./private-access.js?v=5"></script>
 </body></html>

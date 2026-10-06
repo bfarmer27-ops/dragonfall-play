@@ -14,6 +14,8 @@ import {
   WATERFALL_TURN_RING_DISTANCE,
   WATERFALL_EXIT_RING_DISTANCE,
   WATERFALL_OPENING_RING_DISTANCES,
+  WATERFALL_PRELUDE_RING_DISTANCES,
+  PRELUDE_LENGTH,
   WATERFALL_BONUS_ORBS,
   WATERFALL_BONUS_VALUE,
   WATERFALL_SPIRE_DISTANCES,
@@ -41,9 +43,14 @@ const exit = rings.find(r => close(r.distance, WATERFALL_EXIT_RING_DISTANCE));
 const descentFirst = rings.find(r => close(r.distance, WATERFALL_DESCENT_RING_DISTANCE));
 const descentFollow = rings.find(r => close(r.distance, WATERFALL_DESCENT_FOLLOW_RING_DISTANCE));
 assert.equal(DEFAULT_SPEED_MULTIPLIER, 12, 'the default waterfall speed is 12x');
-assert.equal(cues.length, 8, 'the waterfall keeps its eight planned orb cues');
+assert.equal(cues.length, 11, 'three Sky Isles cues plus the eight planned waterfall cues');
 assert.equal(bonuses.length, WATERFALL_BONUS_ORBS.length, 'every golden bonus orb is placed');
-assert.equal(rings.length, 10, 'eight cues plus two golden orbs');
+assert.equal(rings.length, 13, 'eleven cues plus two golden orbs');
+for (const distance of WATERFALL_PRELUDE_RING_DISTANCES) {
+ assert.ok(distance < PRELUDE_LENGTH, 'prelude cues sit among the floating islands before the gorge');
+ assert.ok(rings.some(r => close(r.distance, distance)), 'each prelude ring exists');
+}
+assert.ok(FALL_START > PRELUDE_LENGTH + 2000, 'the gorge keeps its full run-up after the prelude');
 for (let i = 1; i < rings.length; i++) assert.ok(rings[i].distance >= rings[i - 1].distance, 'rings are ordered along the course');
 for (const b of bonuses) {
  assert.equal(b.value, WATERFALL_BONUS_VALUE, 'a golden orb is worth five');
@@ -81,7 +88,7 @@ const obstacles = createWaterfallObstacles();
 const spires = obstacles.filter(o => o.kind === 'spire'), totems = obstacles.filter(o => o.kind === 'totem');
 assert.equal(spires.length, WATERFALL_SPIRE_DISTANCES.length, 'every spire is placed');
 assert.equal(totems.length, WATERFALL_TOTEM_DISTANCES.length, 'every totem is placed');
-assert.ok(spires.every(o => o.distance > 600 && o.distance < FALL_START - 300), 'spires stand in the gorge before the approach cue');
+assert.ok(spires.every(o => o.distance > PRELUDE_LENGTH + 600 && o.distance < FALL_START - 300), 'spires stand in the gorge, after the islands and before the approach cue');
 assert.ok(totems.every(o => o.distance > FALL_END + 200), 'totems stand in the river after the fall');
 assert.ok(obstacles.every(o => Math.abs(o.side) === 1 && o.x * o.side > 0 && o.radius >= 14), 'hazards come from both sides with a real footprint');
 assert.ok(obstacles.every(o => close(o.base, routeAt(o.distance).y - WATERFALL_RIVER_CLEARANCE)), 'hazards start at the river');
@@ -91,7 +98,7 @@ assert.ok(obstacles.every(o => Math.abs(o.x) + o.radius < 64), 'every hazard lea
 
 setSpeedMultiplier(15);
 assert.equal(getSpeedMultiplier(), 15, 'the waterfall speed setting reaches 15x');
-assert.equal(createRings(15).length, 10, '15x keeps the same ten orbs');
+assert.equal(createRings(15).length, 13, '15x keeps the same thirteen orbs');
 
 setSpeedMultiplier(7);
 const flight = {};
