@@ -12,8 +12,12 @@ function radialTexture(inner='rgba(255,240,200,1)',mid='rgba(255,120,30,.55)',ou
  const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t;
 }
 const HIT_STEP=3;                 // metres a ball may travel between two hit tests (smallest boulder hit diameter is 8.2 m)
-export function createFireballs({scene,maxBalls=6,onExplode=()=>{}}={}){
+// lights: give each ball a point light (default: high tier only). Adding or removing a light changes three's light
+// count and recompiles every material in the scene; a map with many heavy shaders (Emerald Falls) passes false so
+// the first shot of a flight cannot freeze the game for seconds.
+export function createFireballs({scene,maxBalls=6,onExplode=()=>{},lights}={}){
  const high=TIER==='high';
+ const useLights=lights===undefined?high:!!lights;
  const TRAIL_RATE=high?20:10;     // trail particles per second per ball
  const MAX_PARTICLES=high?160:48; // live sprites (trail + bursts) across all balls; beyond this, new ones are skipped
  const glowTex=radialTexture(),smokeTex=radialTexture('rgba(90,70,60,.55)','rgba(60,50,45,.25)','rgba(40,35,30,0)');
@@ -39,7 +43,7 @@ export function createFireballs({scene,maxBalls=6,onExplode=()=>{}}={}){
    const g=new THREE.Group();
    const core=new THREE.Mesh(new THREE.SphereGeometry(.9,12,10),coreMat);g.add(core);
    const glow=new THREE.Sprite(glowMat);glow.scale.setScalar(7);g.add(glow);
-   let light=null;if(high){light=new THREE.PointLight(0xff8a30,60,90,2);g.add(light);}
+   let light=null;if(useLights){light=new THREE.PointLight(0xff8a30,60,90,2);g.add(light);}
    g.position.copy(origin);scene.add(g);
    const b={g,core,glow,light,vel:direction.clone().normalize().multiplyScalar(speed),owner,age:0,life:range/speed,alive:true,trail:0};
    balls.push(b);return b;

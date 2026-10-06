@@ -2,4 +2,6 @@ kiara_8_sunset (HDRI) and cliff_side (PBR texture set): Poly Haven, CC0 1.0 Univ
 
 Waterfall Aerial Grass Rock 2K maps: Rob Tuytel, Poly Haven, CC0. https://polyhaven.com/a/aerial_grass_rock
 Waterfall Fir Tree 01 twig color/alpha 2K atlases: Rico Cilliers and Rob Tuytel, Poly Haven, CC0. https://polyhaven.com/a/fir_tree_01
+Emerald Falls (2026-10-06) 1K maps, all Poly Haven CC0: bark_willow_02 (vine rings), mossy_rock (shore boulders), forest_floor (forest shelves). https://polyhaven.com/a/bark_willow_02 https://polyhaven.com/a/mossy_rock https://polyhaven.com/a/forest_floor
+Drawn in code, no outside files: ivy leaves, leaf-cluster shrubs, mist puffs, orb glow, rainbow.
 License: https://polyhaven.com/license ; asset hashes and texture usage: docs/WATERFALL-ASSETS.md in the source repository.

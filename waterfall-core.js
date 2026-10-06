@@ -84,6 +84,20 @@ let speedMultiplier=readSpeedMultiplier();
 export function getSpeedMultiplier(){return speedMultiplier;}
 export function setSpeedMultiplier(v){const value=Number(v);speedMultiplier=clamp(Number.isFinite(value)?value:DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,SPEED_MULTIPLIER_MAX);try{globalThis.localStorage?.setItem(SPEED_STORAGE_KEY,String(speedMultiplier));}catch{}return speedMultiplier;}
 
+// Golden bonus orbs: off the main line, worth five, never break the streak when skipped.
+// One hangs low under the second stone arch before the drop; one sits low over the lake at the end.
+export const WATERFALL_BONUS_ORBS=Object.freeze([
+ Object.freeze({distance:FALL_START-140,offset:[62,-58]}),
+ Object.freeze({distance:FALL_END+700,offset:[-48,-70]}),
+]);
+export const WATERFALL_BONUS_VALUE=5;
+// Catching an orb gives a short speed burst. The gain grows with the streak (consecutive orbs).
+export const WATERFALL_BOOST_SECONDS=1.6;
+export const WATERFALL_BOOST_GAIN_BASE=.25;
+export const WATERFALL_BOOST_GAIN_PER_STREAK=.05;
+export const WATERFALL_BOOST_GAIN_MAX=.5;
+export function boostGainForStreak(streak){return clamp(WATERFALL_BOOST_GAIN_BASE+WATERFALL_BOOST_GAIN_PER_STREAK*Math.max(0,Math.floor(Number(streak)||0)),WATERFALL_BOOST_GAIN_BASE,WATERFALL_BOOST_GAIN_MAX);}
+
 export function createRings(selectedSpeed=getSpeedMultiplier()){
  // Ring locations are fixed so the course does not change shape when speed changes.
  void selectedSpeed;
@@ -97,7 +111,9 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
   {distance:WATERFALL_DESCENT_RING_DISTANCE,forced:true,offset:offsets[5]},
   {distance:WATERFALL_DESCENT_FOLLOW_RING_DISTANCE,forced:true,offset:offsets[6]},
   {distance:WATERFALL_EXIT_RING_DISTANCE,forced:true,normal:{x:0,y:-Math.SQRT1_2,z:-Math.SQRT1_2},offset:offsets[7]},
+  ...WATERFALL_BONUS_ORBS.map(b=>({distance:b.distance,forced:true,bonus:true,normal:{x:0,y:0,z:-1},offset:b.offset})),
  ];
+ forced.sort((a,b)=>a.distance-b.distance);
  const curtainZ=routeAt(FALL_START).z-(ARC_RADIUS-60);
  const descentZ=curtainZ-WATERFALL_DESCENT_CLEARANCE;
  const out=[];
@@ -107,19 +123,31 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
   // from the waterfall. This prevents an alternating near/far line beside it.
   const z=distance>=VERTICAL_START?Math.min(p.z,descentZ):p.z;
   const [offsetX,offsetY]=placement.offset||[0,0],x=p.x+offsetX,y=p.y+offsetY,center={x,y,z};
-  out.push({distance,x,altitude:y,z,center,normal,radius:WATERFALL_RING_RADIUS,pitch:p.pitch,fall:p.fall,caught:false,forced:placement.forced});
+  const bonus=!!placement.bonus;
+  out.push({distance,x,altitude:y,z,center,normal,radius:bonus?WATERFALL_RING_RADIUS*.75:WATERFALL_RING_RADIUS,pitch:p.pitch,fall:p.fall,caught:false,forced:placement.forced,bonus,value:bonus?WATERFALL_BONUS_VALUE:1});
  }
  return out;
 }
 
+// Designed hazards, not a random stream. Spires: four rock needles rising out of the upper river in the
+// gorge slalom, alternating sides, each leaving a clear line past it. Totems: three carved stone pillars on
+// mossy islands in the lower river after the fall. Every hazard starts at its river surface and rises into
+// the flight corridor; grazing one costs a shield; a fireball shatters it.
+export const WATERFALL_SPIRE_DISTANCES=Object.freeze([900,1330,1760,2240]);
+export const WATERFALL_TOTEM_DISTANCES=Object.freeze([5250,5700,6150]);
 export function createWaterfallObstacles(){
- const sides=[-1,1,-1,1,-1,1],out=[];
-  for(let index=0,distance=WATERFALL_OBSTACLE_START;distance<ROUTE_LENGTH-260;index++,distance+=WATERFALL_OBSTACLE_SPACING){
-  const p=routeAt(distance),side=sides[index%sides.length],radius=26+(index%3)*3;
-  // Each island starts at the river surface and rises into the flight corridor.
-  // The side placement leaves a clear line around it for the ring approach.
-  const riverY=p.y-WATERFALL_RIVER_CLEARANCE,base=riverY,top=p.y+20+(index%3)*14;
-  out.push({distance,index,side,x:p.x+side*28,altitude:(base+top)/2,base,top,z:p.z,radius,thickness:top-base,hit:false});
+ const out=[];let index=0;
+ for(const distance of WATERFALL_SPIRE_DISTANCES){
+  const p=routeAt(distance),side=index%2?1:-1,radius=18+(index%2)*3;
+  const base=p.y-WATERFALL_RIVER_CLEARANCE,top=p.y+36+(index%2)*10;
+  out.push({kind:'spire',distance,index,side,x:p.x+side*30,altitude:(base+top)/2,base,top,z:p.z,radius,thickness:top-base,hit:false});
+  index++;
+ }
+ for(const distance of WATERFALL_TOTEM_DISTANCES){
+  const p=routeAt(distance),side=index%2?1:-1,radius=14;
+  const base=p.y-WATERFALL_RIVER_CLEARANCE,top=p.y+24;
+  out.push({kind:'totem',distance,index,side,x:p.x+side*27,altitude:(base+top)/2,base,top,z:p.z,radius,thickness:top-base,hit:false});
+  index++;
  }
  return out;
 }

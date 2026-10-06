@@ -2,8 +2,22 @@
 // Route geometry supplies only the starting point; it never supplies movement or attitude.
 import {Euler, Quaternion, Vector3} from './vendor/three.module.js';
 import {damp, PHYSICS_STEP, wingCommand} from './flight.js';
-import {routeAt, ARC_RADIUS, WATERFALL_CRUISE_SPEED, getSpeedMultiplier} from './waterfall-core.js';
+import {routeAt, ARC_RADIUS, WATERFALL_CRUISE_SPEED, getSpeedMultiplier, WATERFALL_BOOST_SECONDS, boostGainForStreak} from './waterfall-core.js';
 import {limitWaterfallMovement} from './waterfall-bumper.js?v=1';
+
+// Orb boost: 0..1 strength of the current speed burst (full for most of the burst, then a smooth fade).
+export function waterfallBoostStrength(f) {
+  const left = Number(f && f.boost) || 0;
+  if (left <= 0) return 0;
+  const t = Math.min(1, left / WATERFALL_BOOST_SECONDS);
+  return t < .35 ? t / .35 : 1;
+}
+// Called by the game when an orb is caught: restarts the burst with the streak's gain.
+export function applyOrbBoost(f, streak) {
+  f.boost = WATERFALL_BOOST_SECONDS;
+  f.boostGain = boostGainForStreak(streak);
+  return f;
+}
 
 export const WATERFALL_TURN_RADIUS = ARC_RADIUS;
 export const WATERFALL_RING_RADIUS = 13.5;
@@ -26,6 +40,7 @@ export function initializeWaterfallFlight(f) {
     speed, speedMultiplier, vx: 0, vy: 0, vz: -speed, elapsed: 0,
     diveHold: 0, noseDive: false,
     bumperActive: false,
+    boost: 0, boostGain: 0, streak: 0, bestStreak: 0,
   });
   return f;
 }
@@ -48,7 +63,9 @@ export function stepWaterfallFlight(f, left, right, dt) {
     // Read the saved setting every physics step so a live slider change affects
     // the current flight instead of waiting for a restart.
     f.speedMultiplier = getSpeedMultiplier();
-    f.speed = WATERFALL_CRUISE_SPEED*f.speedMultiplier;
+    // An orb burst adds up to boostGain (25-50%) on top of the chosen speed, then fades out.
+    f.boost = Math.max(0, (f.boost || 0) - step);
+    f.speed = WATERFALL_CRUISE_SPEED*f.speedMultiplier*(1 + (f.boostGain || 0) * waterfallBoostStrength(f));
     f.pitchRate = command.pitch * f.speed / WATERFALL_TURN_RADIUS * WATERFALL_VERTICAL_RESPONSE;
     f.yawRate = command.bank * f.speed / WATERFALL_TURN_RADIUS;
     axis.set(f.pitchRate, f.yawRate, 0);

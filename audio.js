@@ -80,6 +80,13 @@ export function createAudio(){
   hitPlayer(){if(!ctx||!enabled)return;tone({freq:180,to:90,duration:.3,type:'square',level:.18});burst({kind:'pink',duration:.3,from:1200,to:300,level:.3});},
   // Flying through a cloud bank edge: a soft swell.
   cloudEnter(){if(!ctx||!enabled)return;burst({kind:'white',duration:.9,from:1500,to:4000,type:'bandpass',level:.14,q:.4});},
+  // Catching a green orb (Emerald Falls): a two-note chime that climbs with the streak, plus the boost rush.
+  orb(streak=1,gold=false){if(!ctx||!enabled)return;const k=Math.pow(1.06,Math.min(8,Math.max(0,streak-1)))*(gold?.75:1);
+   tone({freq:660*k,to:700*k,duration:.32,type:'sine',level:.22});tone({freq:990*k,to:1050*k,duration:.42,type:'triangle',level:.14,delay:.07});
+   if(gold){tone({freq:1320*k,to:1400*k,duration:.6,type:'sine',level:.12,delay:.14});}
+   burst({kind:'pink',duration:.55,from:400,to:2600,level:.22,q:.9,toReverb:true});},
+  // A missed orb: a short low drop so the lost streak is heard, not only read.
+  orbMiss(){if(!ctx||!enabled)return;tone({freq:300,to:140,duration:.3,type:'triangle',level:.12,toReverb:false});},
  };
  return api;
 }

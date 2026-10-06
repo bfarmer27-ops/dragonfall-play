@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import {TIER, setTier, readTierSetting} from './quality.js';
 import {createRenderSystem} from './render.js';
 import {createSky} from './sky.js';
-import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=4';
+import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=5';
 import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=3';
 import {createTerrain, terrainHeight, createArchGeometry, createBoulderGeometry, createRockMaterial, worldSlope} from './terrain.js';
 import {createWater} from './water.js';
@@ -29,8 +29,8 @@ import {createTilt} from './tilt.js';
 import {createAudio} from './audio.js';
 import {createSpeech, readFireWord, saveFireWord, STICKY_STATUSES} from './speech.js';
 import {createNoiseFire} from './noise-fire.js?v=1';
-import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, createRings as createWaterfallRings, createWaterfallObstacles, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
-import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing} from './waterfall-flight.js?v=5';
+import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, ROUTE_LENGTH, createRings as createWaterfallRings, createWaterfallObstacles, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
+import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=6';
 import {createFireballs} from './fireball.js';
 import {createNet} from './net.js';
 
@@ -38,6 +38,7 @@ const $ = id => document.getElementById(id);
 const TAU = Math.PI * 2;
 const query = new URLSearchParams(location.search);
 const WATERFALL_MAP = location.pathname.includes('/waterfall/');
+const WATERFALL_FINISH_Z = routeAt(ROUTE_LENGTH).z;   // crossing this plane after the lake completes the course
 let WATERFALL_RINGS = WATERFALL_MAP ? createWaterfallRings() : [];
 const WATERFALL_OBSTACLES = WATERFALL_MAP ? createWaterfallObstacles() : [];
 const debug = query.get('debug') === '1';
@@ -66,7 +67,9 @@ scene.background = null;   // the sky is a mesh; GTAO needs a null background
 const camera = new THREE.PerspectiveCamera(56, viewportWidth / viewportHeight, 0.1, 2200);
 let rs;
 try {
- rs = createRenderSystem({canvas: $('sky'), scene, camera, overrides: WATERFALL_MAP ? {dof:false,shafts:false,gtao:false} : {}});
+ // Emerald Falls keeps the film grade (sun shafts, bloom, light grain) but no depth blur or screen-space AO:
+ // the far scenery is the picture, and the chase camera is the only view here.
+ rs = createRenderSystem({canvas: $('sky'), scene, camera, overrides: WATERFALL_MAP ? {dof:false,gtao:false} : {}});
 } catch (e) {
  $('error').hidden = false;
  throw e;
@@ -74,8 +77,7 @@ try {
 const renderer = rs.renderer;
 rs.setSize(viewportWidth, viewportHeight);
 if (WATERFALL_MAP) {
- // Clear scenery at every distance. Camera offset, direction and view angle stay unchanged.
- const u=rs.passes.grade.uniforms;u.uCA.value=0;u.uGrain.value=0;u.uVignette.value=.15;u.uContrast.value=1.03;
+ const u=rs.passes.grade.uniforms;u.uCA.value=.9;u.uGrain.value=.03;u.uVignette.value=.35;u.uContrast.value=1.06;
  camera.far=9000;camera.updateProjectionMatrix();
 }
 
@@ -104,6 +106,17 @@ const hash = (a, b = 0) => { const n = Math.sin(a * 127.1 + b * 311.7) * 43758.5
 const water = createWater({renderer});
 const terrain = createTerrain({scene, renderer, water});
 const sky = WATERFALL_MAP ? createWaterfallSky({renderer,scene}) : createSky({renderer, scene});
+// Emerald Falls scenery (waterfall-environment.js): built before the gates and hazards, which borrow its
+// vine portals and rock spires. The canyon's chunk pool and river stay hidden on this map.
+const waterfallWorld = new THREE.Group();
+waterfallWorld.name='stationary-waterfall-map';
+let waterfallEnvironment=null;
+if (WATERFALL_MAP) {
+ scene.add(waterfallWorld);
+ for (const chunk of terrain.chunks || []) chunk.group.visible=false;
+ terrain.river.visible=false;
+ waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer});
+}
 const canyonDressing = new THREE.Group();
 scene.add(canyonDressing);
 canyonDressing.visible = !WATERFALL_MAP;
@@ -162,9 +175,10 @@ function setGate(g, n) {
  if (WATERFALL_MAP) {
   const ring=WATERFALL_RINGS[n];
   g.ring=ring;g.d=ring.distance;g.x=ring.x;g.alt=ring.altitude;g.passed=false;g.caught=false;g.group.visible=true;
+  if (g.portal) g.portal.caught=false;
   g.group.position.set(ring.x,ring.altitude,ring.z);
   g.group.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,-1),new THREE.Vector3(ring.normal.x,ring.normal.y,ring.normal.z));
-  g.group.scale.setScalar(ring.radius/13.5);return;
+  g.group.scale.setScalar(g.portal?1:ring.radius/13.5);return;
  }
  g.d = 160 + n * 185;
  g.x = centerAt(g.d) + Math.sin(n * 1.8) * 16;
@@ -176,6 +190,16 @@ function setGate(g, n) {
  g.group.rotation.set(0, 0, 0);
 }
 function addGate(i) {
+ if (WATERFALL_MAP) {
+  // A vine ring with a glowing orb; built at the ring's own radius, so no scale is applied.
+  const ring=WATERFALL_RINGS[i];
+  const portal=waterfallEnvironment.createPortal({radius:ring.radius,bonus:ring.bonus,seed:i*1.7});
+  scene.add(portal.group);
+  const gate={group:portal.group,portal};
+  setGate(gate,i);
+  gates.push(gate);
+  return;
+ }
  const group = new THREE.Group();
  group.add(new THREE.Mesh(gateGeo, gateMaterial), new THREE.Mesh(haloGeo, haloMaterial));
  for (let j = 0; j < 4; j++) {
@@ -210,7 +234,7 @@ const obstacles = [];
 function setWaterfallObstacle(o, n) {
  const hazard = WATERFALL_OBSTACLES[n];
  if (!hazard) { o.mesh.visible = false; return; }
- o.n=n;o.d=hazard.distance;o.x=hazard.x;o.alt=hazard.altitude;o.base=hazard.base;o.top=hazard.top;o.radius=hazard.radius;o.thickness=hazard.thickness;o.hit=false;
+ o.n=n;o.d=hazard.distance;o.x=hazard.x;o.alt=hazard.altitude;o.base=hazard.base;o.top=hazard.top;o.radius=hazard.radius;o.thickness=hazard.thickness;o.kind=hazard.kind||'spire';o.hit=false;
  o.mesh.position.set(hazard.x,hazard.altitude,hazard.z);
  o.mesh.scale.set(o.radius / 2, o.thickness, o.radius / 2);
  o.mesh.rotation.y = (n % 2 ? -.22 : .22);
@@ -228,7 +252,8 @@ function setObstacle(o, n) {
  o.mesh.rotation.y = hash(n, 7) * Math.PI;
 }
 for (let i = 0; i < (WATERFALL_MAP ? WATERFALL_OBSTACLES.length : 9); i++) {
- const mesh = new THREE.Mesh(rockGeometry, boulderMaterial);
+ // Emerald Falls hazards are rock spires and stone totems from the environment, drawn with its terrain material.
+ const mesh = WATERFALL_MAP ? waterfallEnvironment.makeObstacleMesh(WATERFALL_OBSTACLES[i]) : new THREE.Mesh(rockGeometry, boulderMaterial);
  scene.add(mesh);
  const o = {mesh};
  setObstacle(o, i);
@@ -250,19 +275,8 @@ for (let i = 0; i < 3; i++) {
  setArch(a, i);
  arches.push(a);
 }
-const waterfallWorld = new THREE.Group();
-waterfallWorld.name='stationary-waterfall-map';
-if (WATERFALL_MAP) scene.add(waterfallWorld);
-let waterfallEnvironment=null;
 const waterfallGuide=WATERFALL_MAP ? createWaterfallGuide({container:$('game'),camera,gates}) : null;
-function buildWaterfallMapScene() {
- if (!WATERFALL_MAP) return;
- for (const chunk of terrain.chunks || []) chunk.group.visible=false;
- terrain.river.visible=false;
- waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer});
- for(const a of arches)a.mesh.visible=false;
-}
-buildWaterfallMapScene();
+if (WATERFALL_MAP) for(const a of arches)a.mesh.visible=false;   // the canyon's arches belong to the canyon route
 // ---------------------------------------------------------------------------------------------
 let controlMode = WATERFALL_MAP ? 'thumbs' : readControlMode(), invertVertical = readInvertSetting(controlMode);
 const tilt = createTilt();
@@ -471,6 +485,26 @@ function gameOver() {
  speech.stop();
  noiseFire.stop();
 }
+// Emerald Falls has an end: past the lake the run is complete and the summary shows orbs, streak and time.
+function finishCourse() {
+ mode = 'over';
+ saveBest();
+ resetInputs();
+ const secs = Math.max(0, Math.round(flight.elapsed || 0));
+ $('modal').hidden = false;
+ $('modal-eyebrow').textContent = 'EMERALD FALLS CLEARED';
+ $('modal-title').textContent = 'You rode the fall';
+ $('modal-message').textContent = flight.gates + (flight.gates === 1 ? ' orb' : ' orbs') + ' · best streak ' + (flight.bestStreak || 0) + ' · ' + Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+ $('run-stats').hidden = false;
+ $('final-distance').textContent = Math.floor(flight.distance).toLocaleString();
+ $('final-gates').textContent = flight.gates;
+ $('final-kills').textContent = flight.kills;
+ $('resume').innerHTML = 'FLY AGAIN <span>↗</span>';
+ toast('COURSE COMPLETE');
+ audio.update({playing: false});
+ speech.stop();
+ noiseFire.stop();
+}
 function hit(reason) {
  if (flight.invulnerable > 0) return;
  window.__hits++;
@@ -675,7 +709,7 @@ function flashScreen(kind) {
 // ---------------------------------------------------------------------------------------------
 const FIRE_COOLDOWN = 0.9, FIREBALL_EXTRA_SPEED = 110, FIREBALL_RANGE = 520;
 let lastFireAt = -10;
-const fireballs = createFireballs({scene, maxBalls: tier === 'phone' ? 3 : 6, onExplode: (pos) => {
+const fireballs = createFireballs({scene, maxBalls: tier === 'phone' ? 3 : 6, lights: !WATERFALL_MAP && tier === 'high', onExplode: (pos) => {
  // Louder the closer the burst is to the rider: 1 = right beside you, 0 = 120 m or more away.
  audio.explosion(1 - Math.min(1, pos.distanceTo(dragon.position) / 120));
 }});
@@ -720,9 +754,21 @@ function fireballHits(pos, ball) {
  if (!WATERFALL_MAP) {
   if (alt < 0) return 'water';
   if (terrainHeight(pos.x, d) > alt) return 'rock';
+ } else if (waterfallEnvironment && pos.y < waterfallEnvironment.surfaceHeight(pos.x, pos.z, 2)) {
+  return 'rock';   // the ball meets the stationary valley floor, a wall or the river
  }
  if (ball.owner !== 'me') return null;   // a friend's ball is only a picture here: the shooter decides its hits
- for (const o of obstacles) {
+ if (WATERFALL_MAP) {
+  if (debug) (window.__fireLog ||= []).push([+pos.x.toFixed(1), +pos.y.toFixed(1), +pos.z.toFixed(1)]);
+  // Spires and totems are fixed world objects: test the ball against the hazard cylinder in world space.
+  for (const o of obstacles) {
+   if (o.mesh.visible && !o.hit && Math.hypot(pos.x - o.x, pos.z - o.mesh.position.z) < o.radius + 2 && pos.y > o.base && pos.y < o.top) {
+    o.hit = true; o.mesh.visible = false;
+    scoreKill(o.kind === 'totem' ? 'TOTEM SHATTERED' : 'SPIRE SHATTERED');
+    return 'rock';
+   }
+  }
+ } else for (const o of obstacles) {
   if (o.mesh.visible && Math.hypot(pos.x - o.x, d - o.d) < o.radius + 1 && alt < o.height) { destroyBoulder(o); return 'rock'; }
  }
  for (const [id, rr] of riders) {
@@ -1084,7 +1130,9 @@ const cameraAnchor = new THREE.Vector3(), newAnchor = new THREE.Vector3(), camer
 function positionCamera(dt, instant = false) {
  const aspect = viewportWidth / viewportHeight;
  if (WATERFALL_MAP) {
-  const pose=waterfallCameraPose(flight);camera.position.copy(pose.position);lookTarget.copy(pose.target);camera.up.copy(pose.up);camera.lookAt(lookTarget);camera.fov=56;camera.aspect=aspect;camera.updateProjectionMatrix();return;
+  // An orb boost widens the view a little (damped) so the speed burst is felt, not only read on the HUD.
+  const pose=waterfallCameraPose(flight);camera.position.copy(pose.position);lookTarget.copy(pose.target);camera.up.copy(pose.up);camera.lookAt(lookTarget);
+  const boostFov=56+9*waterfallBoostStrength(flight);camera.fov=instant?boostFov:damp(camera.fov,boostFov,4,dt);camera.aspect=aspect;camera.updateProjectionMatrix();return;
  }
  const dist = aspect < 0.85 ? 48 : aspect < 1.2 ? 40 : 38, route=mapPoint(flight.distance), h = flight.alt - flight.distance * worldSlope;
  const worldX = flight.x;
@@ -1196,10 +1244,22 @@ function updateWorld(dt) {
  const mult = getSpeedMultiplier();
  if (WATERFALL_MAP) {
   const current={x:flight.x,y:flight.alt,z:flight.z};
+  if (mode==='playing'&&current.z<WATERFALL_FINISH_Z) { finishCourse(); return; }
   const target=selectWaterfallTarget(gates,flight),next=target?.index??gates.length;
   for(const g of gates){
    if(mode==='playing'&&!g.caught&&crossesWaterfallRing(flight.previousPosition,current,g.ring)){
-    g.caught=true;g.passed=true;flight.gates++;audio.gate();toast('GATE CAUGHT +1');
+    // Orb caught: score its value, extend the streak, start the speed burst, flash the burst where the orb was.
+    g.caught=true;g.passed=true;if(g.portal)g.portal.caught=true;
+    const value=g.ring.value||1;flight.gates+=value;flight.streak=(flight.streak||0)+1;flight.bestStreak=Math.max(flight.bestStreak||0,flight.streak);
+    applyOrbBoost(flight,flight.streak);
+    if (debug) (window.__orbEvents ||= []).push({event:'catch',ring:g.n,streak:flight.streak,z:Math.round(current.z)});
+    audio.orb(flight.streak,!!g.ring.bonus);
+    if(waterfallEnvironment)waterfallEnvironment.burst(g.group.position,g.ring.bonus?0xffd27a:0x9dffc4);
+    toast(g.ring.bonus?'GOLDEN ORB +'+value+' · BOOST':(flight.streak>=3?'ORB +1 · STREAK '+flight.streak+' · BOOST':'ORB +1 · BOOST'));
+   } else if(mode==='playing'&&!g.caught&&!g.passed){
+    // Missed: once the orb is 40 m behind the rider the streak ends (golden bonus orbs never break it).
+    const r=g.ring,ahead=(r.center.x-current.x)*r.normal.x+(r.center.y-current.y)*r.normal.y+(r.center.z-current.z)*r.normal.z;
+    if(ahead<-40){g.passed=true;if (debug) (window.__orbEvents ||= []).push({event:'miss',ring:g.n,ahead:Math.round(ahead),streakBefore:flight.streak,z:Math.round(current.z)});if(!r.bonus&&(flight.streak||0)>0){toast('ORB MISSED · STREAK LOST');audio.orbMiss();}if(!r.bonus)flight.streak=0;}
    }
    // Keep three upcoming rings on screen so the rider can choose a line early.
    g.group.visible=!g.caught&&g.n>=next&&g.n<=next+2&&Math.hypot(g.group.position.x-current.x,g.group.position.y-current.y,g.group.position.z-current.z)<VISIBLE_RANGE;
@@ -1211,7 +1271,7 @@ function updateWorld(dt) {
    const radial=Math.sqrt(Math.max(0,dx*dx+dy*dy+dz*dz-ahead*ahead));
    const clearance=o.radius+4;
    const insideHeight=current.y>o.base&&current.y<o.top;
-   if(mode==='playing'&&!o.hit&&insideHeight&&ahead>-clearance&&ahead<clearance&&radial<clearance){o.hit=true;hit('ISLAND GRAZE');}
+   if(mode==='playing'&&!o.hit&&insideHeight&&ahead>-clearance&&ahead<clearance&&radial<clearance){o.hit=true;hit((o.kind==='totem'?'TOTEM':'SPIRE')+' GRAZE');}
    o.mesh.visible=!o.hit&&ahead>-120&&ahead<VISIBLE_RANGE;
   }
   // No route-driven transforms, recycling, spin or pulsing in this finite map.
@@ -1270,6 +1330,8 @@ function updateUI() {
  $('altitude').textContent = Math.max(0, Math.round(flight.alt));
  $('gates').textContent = flight.gates;
  $('kills').textContent = flight.kills;
+ const streakEl = $('streak');
+ if (streakEl) streakEl.textContent = flight.streak || 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1385,6 +1447,7 @@ function frame(now) {
  if (!WATERFALL_MAP) dressing.update(time, flight);
  camera.getWorldPosition(cameraWorldPos);
  sky.update(time, cameraWorldPos, dragon.position);
+ if (waterfallEnvironment) waterfallEnvironment.update(time, flight, camera);   // water, mist, orbs, wisps, birds
  if (waterfallGuide) waterfallGuide.update(flight);
  uiTime += dt;
  if (uiTime > 0.12) {
