@@ -280,8 +280,42 @@ export function createRenderSystem({canvas, scene, camera, overrides = {}}) {
   u.uStrength.value = onScreen ? 1.1 * Math.max(0, 1 - Math.max(Math.abs(sunNdc.x), Math.abs(sunNdc.y)) * 0.5) : 0;
  }
 
+ // R6. Automatic resolution (Ryan, 2026-10-07: "pretty choppy and hard to control"). Once a second the average
+ // frame rate is checked: under 48 fps the drawing resolution drops 0.15 (down to 0.75 x the CSS pixels on a
+ // phone, 1 on a computer); over 57 fps for 4 checks in a row it climbs back 0.1 toward the tier's limit. Still
+ // under 40 fps at the lowest resolution on the high tier, the heaviest extra passes (ambient shadowing, depth
+ // blur, sun shafts) switch off. Frames longer than 0.25 s (tab switches, loading) are ignored. The resolution only
+ // drops when the graphics chip is the slow part: if the game's own JavaScript fills most of each frame, a smaller
+ // picture would only look worse without running faster, so it stays.
+ const adaptive = {min: isHigh ? 1 : 0.75, max: pixelRatioCap, time: 0, frames: 0, work: 0, workFrames: 0, good: 0, slowAtMin: 0, wait: 3, enabled: overrides.adaptive !== false};
+ function adaptResolution(dt) {
+  if (!adaptive.enabled || !(dt > 0) || dt > 0.25) return;
+  adaptive.time += dt; adaptive.frames++; adaptive.wait -= dt;
+  if (adaptive.time < 1) return;
+  const fps = adaptive.frames / adaptive.time, frameMs = 1000 * adaptive.time / adaptive.frames;
+  // Frames come in whole screen refreshes (16.7 ms steps at 60 Hz), so 18 ms of JavaScript already means 33 ms
+  // frames: only a frame whose JavaScript leaves room for 60 fps (under 11.7 ms) is limited by the graphics chip.
+  const workMs = adaptive.workFrames ? adaptive.work / adaptive.workFrames : 0, gpuBound = workMs < Math.min(frameMs * .6, 11.7);
+  adaptive.time = 0; adaptive.frames = 0; adaptive.work = 0; adaptive.workFrames = 0;
+  if (adaptive.wait > 0) return;
+  const setCap = n => { const before = pixelRatio; pixelRatioCap = n; if (computePixelRatio(width, height) !== before) applySize(width, height); adaptive.wait = 1.5; };
+  if (fps < 48) {
+   adaptive.good = 0;
+   if (!gpuBound) adaptive.slowAtMin = 0;
+   else if (pixelRatioCap > adaptive.min + 1e-3) setCap(Math.max(adaptive.min, +(pixelRatioCap - 0.15).toFixed(2)));
+   else if (fps < 40 && ++adaptive.slowAtMin >= 3) {
+    for (const name of ['gtao', 'bokeh', 'shafts']) if (passes[name]) passes[name].enabled = false;
+    adaptive.slowAtMin = 0;
+   }
+  } else if (fps > 57) {
+   adaptive.slowAtMin = 0;
+   if (++adaptive.good >= 4 && pixelRatioCap < adaptive.max - 1e-3) { setCap(Math.min(adaptive.max, +(pixelRatioCap + 0.1).toFixed(2))); adaptive.good = 0; }
+  } else { adaptive.good = 0; adaptive.slowAtMin = 0; }
+ }
+
  // R5. One frame. Integration calls only this; renderer.render is never called directly.
- function render(dt = 1 / 60) {
+ function render(dt = 1 / 60, frameStart = null) {
+  adaptResolution(dt);
   const step = Math.min(Math.max(dt || 0, 0), 0.1);
   renderer.info.reset();
   camera.updateMatrixWorld();
@@ -292,6 +326,8 @@ export function createRenderSystem({canvas, scene, camera, overrides = {}}) {
   }
   gradeU.uTime.value += step;
   composer.render(step);
+  // JavaScript time of this frame (game logic plus handing the frame to the graphics chip), for adaptResolution.
+  if (frameStart !== null && typeof performance !== 'undefined') { const w = performance.now() - frameStart; if (w >= 0 && w < 250) { adaptive.work += w; adaptive.workFrames++; } }
  }
 
  return {
@@ -311,6 +347,7 @@ export function createRenderSystem({canvas, scene, camera, overrides = {}}) {
   setPixelRatioCap(n) { if (Number.isFinite(n) && n > 0) { pixelRatioCap = n; applySize(width, height); } },
   getPixelRatio() { return pixelRatio; },
   getPixelRatioCap() { return pixelRatioCap; },
+  getAdaptiveState() { return {cap: pixelRatioCap, min: adaptive.min, max: adaptive.max, enabled: adaptive.enabled}; },
   dispose() {
    for (const pass of composer.passes) if (typeof pass.dispose === 'function') pass.dispose();
    composer.dispose();

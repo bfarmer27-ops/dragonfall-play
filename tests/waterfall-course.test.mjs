@@ -42,7 +42,8 @@ import {
   getSpeedMultiplier,
 } from '../waterfall-core.js';
 import {normalizeThumbInput} from '../control-settings.js';
-import {initializeWaterfallFlight, stepWaterfallFlight, applyOrbBoost, waterfallBoostStrength, WATERFALL_TURN_RADIUS, WATERFALL_PITCH_RADIUS} from '../waterfall-flight.js';
+import {initializeWaterfallFlight, stepWaterfallFlight, applyOrbBoost, waterfallBoostStrength, waterfallCameraPose, WATERFALL_TURN_RADIUS, WATERFALL_PITCH_RADIUS} from '../waterfall-flight.js';
+import {Vector3} from '../vendor/three.module.js';
 import {limitWaterfallMovement, WATERFALL_BUMPER_RADIUS} from '../waterfall-bumper.js';
 
 const close = (a, b, epsilon = 1e-6) => Math.abs(a - b) <= epsilon;
@@ -202,6 +203,29 @@ for (const speed of [6, 15]) {
  for (let i = 0; i < 120; i++) stepWaterfallFlight(turner, -1, 1, 1 / 120);
  const expected = WATERFALL_CRUISE_SPEED * speed / WATERFALL_TURN_RADIUS;
  assert.ok(Math.abs(turner.yaw - expected) < .02, `full bank for 1 s at ${speed}x turns ${expected.toFixed(2)} rad (got ${turner.yaw.toFixed(2)})`);
+}
+
+// The picture never jumps in the waterfall dive (Ryan, 2026-10-07: "something glitches the dragon's rotation").
+// Dive to straight down, then bank a little / keep pushing past vertical: the camera's up vector may not turn
+// more than 3 degrees in one 1/120 s step (the rebuild from a compass heading jumped 69 and 179 degrees).
+// Ordinary flight with mixed climb and turn inputs still ends wings-level (no tilt builds up).
+{
+ const camUp = f => waterfallCameraPose(f).up;
+ for (const [label, segments] of [['small bank pointing down', [[150, -1, -1], [240, -.15, .15]]], ['pushing past vertical', [[200, -1, -1], [120, 0, 0]]]]) {
+  setSpeedMultiplier(12);
+  const diver = initializeWaterfallFlight({}); diver.alt = 5000;
+  let prev = camUp(diver), worst = 0;
+  for (const [steps, l, r] of segments) for (let i = 0; i < steps; i++) {
+   stepWaterfallFlight(diver, l, r, 1 / 120);
+   const up = camUp(diver); worst = Math.max(worst, Math.acos(Math.min(1, up.dot(prev))) * 180 / Math.PI); prev = up;
+  }
+  assert.ok(worst < 3, `${label}: the camera turns at most 3 degrees per step (worst ${worst.toFixed(1)})`);
+ }
+ const cruiser = initializeWaterfallFlight({}); cruiser.alt = 5000;
+ for (let i = 0; i < 1200; i++) stepWaterfallFlight(cruiser, Math.sin(i / 40) * .6 - .3, Math.cos(i / 55) * .6 + .2, 1 / 120);
+ for (let i = 0; i < 60; i++) stepWaterfallFlight(cruiser, 0, 0, 1 / 120);
+ const right = new Vector3(1, 0, 0).applyQuaternion(cruiser.orientation);
+ assert.ok(Math.abs(right.y) < .01, 'after mixed climb/turn flying the wings are level (right vector height ' + right.y.toFixed(4) + ')');
 }
 
 // Bumper: a blocked move slides instead of freezing (Ryan, 2026-10-07: the dragon froze in front of the gold orb).

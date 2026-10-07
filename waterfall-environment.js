@@ -1084,18 +1084,44 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
  const texturesReady = Promise.all(pending);
  const ready = Promise.all([texturesReady, modelsReady]).then(() => { group.userData.assetsReady = true; });
  ready.catch(e => { group.userData.assetError = String(e?.message || e); });
+ // Scenery that never moves stops recomputing its position every frame (2026-10-07: 1,367 objects were re-placed
+ // each frame on a phone, the biggest single piece of the frame's JavaScript). Things that move keep updating:
+ // drifting mist sprites, bird flocks, orb bursts and lights. Hiding and showing pieces still works.
+ function freezeStaticScenery() {
+  const moving = new Set([...sprites, ...flocks.map(f => f.birds), ...bursts.map(b => b.sprite)]);
+  group.traverse(o => { if (o.isLight || o.isCamera) moving.add(o); });
+  const holdsMoving = new Set();
+  for (const o of moving) for (let p = o.parent; p && p !== group; p = p.parent) holdsMoving.add(p);
+  group.updateMatrixWorld(true);
+  let frozen = 0;
+  const freeze = o => {
+   if (moving.has(o)) return;
+   if (holdsMoving.has(o)) { for (const c of o.children) freeze(c); return; }
+   o.matrixAutoUpdate = false; o.matrixWorldAutoUpdate = false; frozen++;
+  };
+  for (const c of group.children) freeze(c);
+  group.userData.frozenScenery = frozen;
+ }
+ ready.then(freezeStaticScenery, freezeStaticScenery);
  group.userData = {...group.userData, forestTrees: treeCount, shrubs: shrubItems.length, rocks: rockSpots.length, cliffs: cliffSpots.length, ferns: fernSpots.length, islands: ISLANDS.length, hollow: hollow.counts, pieces: chunks.length, textureSize: high ? 2048 : 1024, stationary: true, reflection: useReflection};
 
  function surfaceHeight(x, z, radius = 24) {
   let top = hollow.floorAt(x, z, radius);
   for (const s of surfaces) {
    if (z - radius > s.start || z + radius < s.end) continue;
-   const dz = (s.start - s.end) / s.rows, p = s.positions, n = s.columns;
+   const dz = (s.start - s.end) / s.rows, P = s.positions.array, n = s.columns;
    const first = Math.max(0, Math.floor((s.start - z - radius) / dz)), last = Math.min(s.rows - 1, Math.floor((s.start - z + radius) / dz));
-   for (let j = first; j <= last; j++) for (let i = 0; i < n - 1; i++) {
-    const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
-    if (Math.max(p.getX(b), p.getX(d)) < x - radius || Math.min(p.getX(a), p.getX(c)) > x + radius) continue;
-    top = Math.max(top, p.getY(a), p.getY(b), p.getY(c), p.getY(d));
+   // Columns run left to right in every row, so jump to the few under the footprint instead of scanning all of
+   // them (same cells, same answer; this runs several times per physics step).
+   const firstAt = (row, v) => { let lo = 0, hi = n - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (P[(row * n + m) * 3] < v) lo = m + 1; else hi = m; } return lo; };
+   for (let j = first; j <= last; j++) {
+    const i0 = Math.max(0, Math.min(firstAt(j, x - radius), firstAt(j + 1, x - radius)) - 1);
+    const i1 = Math.min(n - 2, Math.max(firstAt(j, x + radius), firstAt(j + 1, x + radius)));
+    for (let i = i0; i <= i1; i++) {
+     const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
+     if (Math.max(P[b * 3], P[d * 3]) < x - radius || Math.min(P[a * 3], P[c * 3]) > x + radius) continue;
+     top = Math.max(top, P[a * 3 + 1], P[b * 3 + 1], P[c * 3 + 1], P[d * 3 + 1]);
+    }
    }
   }
   return top;
@@ -1174,6 +1200,8 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   for (const f of flocks) { const a = time * .05 + f.phase; f.birds.position.set(f.cx + Math.cos(a) * f.radius, f.cy + Math.sin(a * 2.3) * 18, f.cz + Math.sin(a) * f.radius * .6); f.birds.rotation.y = -a + Math.PI / 2; }
   let lit = 0;
   for (const p of portals) {
+   // Hidden orbs (all but the next three) skip the per-frame position update of their ten parts.
+   p.group.matrixWorldAutoUpdate = p.group.visible;
    if (!p.group.visible || !p.group.parent) continue;
    const pulse = .5 + .5 * Math.sin(time * 2.4 + p.seed);
    p.orb.position.y = Math.sin(time * 1.3 + p.seed) * 1.2; p.core.position.copy(p.orb.position); p.glow.position.copy(p.orb.position);

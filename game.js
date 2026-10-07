@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import {TIER, setTier, readTierSetting} from './quality.js';
 import {createRenderSystem} from './render.js';
 import {createSky} from './sky.js';
-import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=8';
+import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=9';
 import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=3';
 import {createTerrain, terrainHeight, createArchGeometry, createBoulderGeometry, createRockMaterial, worldSlope} from './terrain.js';
 import {createWater} from './water.js';
@@ -30,7 +30,7 @@ import {createAudio} from './audio.js';
 import {createSpeech, readFireWord, saveFireWord, STICKY_STATUSES} from './speech.js';
 import {createNoiseFire} from './noise-fire.js?v=1';
 import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, ROUTE_LENGTH, createRings as createWaterfallRings, createWaterfallObstacles, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
-import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=9';
+import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=10';
 // Emerald Falls hazard names for the HUD: a graze costs a shield, a fireball shatters (lava cannot be shattered).
 const HAZARD_NAMES={spire:'SPIRE',totem:'TOTEM',stalactite:'STALACTITE',crystal:'CRYSTAL',geyser:'LAVA GEYSER',root:'ROOT'};
 const HAZARD_SHATTER={spire:'SPIRE SHATTERED',totem:'TOTEM SHATTERED',stalactite:'STALACTITE SHATTERED',crystal:'CRYSTAL SHATTERED',root:'ROOT BURNED'};
@@ -117,9 +117,24 @@ let waterfallEnvironment=null;
 if (WATERFALL_MAP) {
  scene.add(waterfallWorld);
  for (const chunk of terrain.chunks || []) chunk.group.visible=false;
+ // Phones: no shadow pass. Nothing on this map receives the sun shadow except the dragon itself, and the pass
+ // drew the dragon a second time every frame (31 of 177 draw calls in the gorge, 2026-10-07). This must come
+ // after the sky is made, because sky.js switches shadows on.
+ if (tier === 'phone') renderer.shadowMap.enabled = false;
  terrain.river.visible=false;
  waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer,scene,sky,onThunder:near=>audio.thunder(near)});
+ // Build every drawing program (shader) while the start screen is up, instead of the first time each piece of
+ // scenery comes into view mid-flight: each first sight cost a pause of up to 272 ms on a phone-speed test
+ // (2026-10-07). The programs are built for the composer's drawing surface, the same one the game draws to.
+ waterfallEnvironment.ready.catch(()=>{}).then(()=>{
+  const before=renderer.getRenderTarget();
+  try { renderer.setRenderTarget(rs.composer.readBuffer); return renderer.compileAsync(scene,camera); }
+  finally { renderer.setRenderTarget(before); }
+ }).catch(e=>console.warn('shader warm-up skipped',e));
 }
+// Outside ?debug=1, do not stop to read each shader's error log the first time it is used: that read waits for the
+// graphics chip to finish building the shader, which turns a background build into a pause.
+if (!new URLSearchParams(location.search).has('debug')) renderer.debug.checkShaderErrors = false;
 const canyonDressing = new THREE.Group();
 scene.add(canyonDressing);
 canyonDressing.visible = !WATERFALL_MAP;
@@ -1244,6 +1259,7 @@ function animateDragon(dt, l, r) {
  }
 }
 
+const waterfallForwardScratch = new THREE.Vector3();   // reused every physics step (no new object per step)
 function updateWorld(dt) {
  const mult = getSpeedMultiplier();
  if (WATERFALL_MAP) {
@@ -1268,7 +1284,7 @@ function updateWorld(dt) {
    // Keep three upcoming rings on screen so the rider can choose a line early.
    g.group.visible=!g.caught&&g.n>=next&&g.n<=next+2&&Math.hypot(g.group.position.x-current.x,g.group.position.y-current.y,g.group.position.z-current.z)<VISIBLE_RANGE;
   }
-  const forward=waterfallForward(flight);
+  const forward=waterfallForward(flight,waterfallForwardScratch);
   for(const o of obstacles){
    const dx=o.x-current.x,dy=o.alt-current.y,dz=o.mesh.position.z-current.z;
    const ahead=dx*forward.x+dy*forward.y+dz*forward.z;
@@ -1466,7 +1482,7 @@ function frame(now) {
   updateAudio();
   if (mode === 'playing' && net.status.mode !== 'offline') updateScoreboard();
  }
- rs.render(dt);
+ rs.render(dt, now);
  window.__frames++;
  if (showStats) updateStats(rawDt);
 }

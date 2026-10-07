@@ -31,6 +31,12 @@ const LOCAL_UP = new Vector3(0, 1, 0);
 const LOCAL_FORWARD = new Vector3(0, 0, -1);
 const _euler = new Euler();
 const clampNumber = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const smoothStep = (a, b, x) => { const t = clampNumber((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+// Wings-level correction: at most this many radians per second of turn about the dragon's own nose.
+export const WATERFALL_ROLL_LEVEL_RATE = 3;
+// Reused every physics step (no new objects per frame, so the phone has less memory to clean up mid-flight).
+const _axis = new Vector3(), _forward = new Vector3(), _up = new Vector3(), _wantUp = new Vector3(), _cross = new Vector3();
+const _halfTurn = new Quaternion(), _fullTurn = new Quaternion(), _middle = new Quaternion(), _rollFix = new Quaternion();
 
 // Call with newFlight() so ordinary scores, health, and other shared counters survive.
 // orientation is authoritative. pitch/yaw are compatibility values, not steering state.
@@ -50,8 +56,8 @@ export function initializeWaterfallFlight(f) {
   return f;
 }
 
-export function waterfallForward(f) {
-  return LOCAL_FORWARD.clone().applyQuaternion(f.orientation);
+export function waterfallForward(f, out = new Vector3()) {
+  return out.copy(LOCAL_FORWARD).applyQuaternion(f.orientation);
 }
 
 export function stepWaterfallFlight(f, left, right, dt) {
@@ -62,8 +68,7 @@ export function stepWaterfallFlight(f, left, right, dt) {
   f.bumperActive=false;
   const count = Math.max(1, Math.ceil(dt / PHYSICS_STEP));
   const step = dt / count;
-  const axis = new Vector3(), halfTurn = new Quaternion(), fullTurn = new Quaternion();
-  const middle = new Quaternion(), forward = new Vector3();
+  const axis = _axis, halfTurn = _halfTurn, fullTurn = _fullTurn, middle = _middle, forward = _forward;
   for (let i = 0; i < count; i++) {
     // Read the saved setting every physics step so a live slider change affects
     // the current flight instead of waiting for a restart.
@@ -75,7 +80,11 @@ export function stepWaterfallFlight(f, left, right, dt) {
     f.yawRate = command.bank * f.speed / WATERFALL_TURN_RADIUS;
     // Thumbs level: the heading eases back toward the course line (-z) over a few seconds, so after the Hollow's
     // bends the islands and the gorge sit straight ahead again instead of looking turned (Ryan, 2026-10-07).
-    if (Math.abs(command.bank) < .08) f.yawRate -= clampNumber(f.yaw, -.6, .6) * .55;
+    // The heading comes from the nose direction and fades out when the nose points straight up or down, where a
+    // compass heading has no meaning (it made the picture spin in the waterfall, Ryan 2026-10-07).
+    forward.copy(LOCAL_FORWARD).applyQuaternion(f.orientation);
+    const level = smoothStep(.2, .5, Math.hypot(forward.x, forward.z));
+    if (Math.abs(command.bank) < .08 && level > 0) f.yawRate -= clampNumber(Math.atan2(-forward.x, -forward.z), -.6, .6) * .55 * level;
     axis.set(f.pitchRate, f.yawRate, 0);
     const rate = axis.length();
     middle.copy(f.orientation);
@@ -86,12 +95,21 @@ export function stepWaterfallFlight(f, left, right, dt) {
       middle.multiply(halfTurn);
       f.orientation.multiply(fullTurn).normalize();
     }
-    // Pitch and turn are applied about the dragon's own axes, which slowly rolls the frame; rebuild the
-    // orientation from its forward direction so no roll ever builds up (the world never looks tilted).
+    // Pitch and turn are applied about the dragon's own axes, which slowly rolls the frame. Turn the dragon about
+    // its nose back to wings-level (its up vector in the upright plane through the nose), at most
+    // WATERFALL_ROLL_LEVEL_RATE rad/s, so no roll builds up in normal flight (the world never looks tilted).
+    // The correction fades to nothing as the nose points straight up or down: "wings level" has no meaning there,
+    // and the old rebuild from a compass heading flipped the picture up to 179 degrees in one step in the fall.
     forward.copy(LOCAL_FORWARD).applyQuaternion(f.orientation);
-    if (Math.abs(forward.y) < .985) {
-      f.yaw = Math.atan2(-forward.x, -forward.z);
-      f.orientation.setFromEuler(_euler.set(Math.asin(clampNumber(forward.y, -1, 1)), f.yaw, 0, 'YXZ'));
+    const horizontal = Math.hypot(forward.x, forward.z), weight = smoothStep(.15, .45, horizontal);
+    if (weight > 0) {
+      _up.copy(LOCAL_UP).applyQuaternion(f.orientation);
+      _wantUp.set(-forward.x * forward.y, 1 - forward.y * forward.y, -forward.z * forward.y).multiplyScalar(1 / horizontal);
+      const angle = Math.atan2(_cross.crossVectors(_up, _wantUp).dot(forward), _up.dot(_wantUp));
+      const limit = WATERFALL_ROLL_LEVEL_RATE * step * weight;
+      const turn = clampNumber(angle, -limit, limit);
+      // A turn about the local nose axis (0,0,-1) equals a turn about the world nose direction.
+      if (turn !== 0) f.orientation.multiply(_rollFix.setFromAxisAngle(LOCAL_FORWARD, turn)).normalize();
     }
     // Midpoint direction keeps turns smooth and makes path length independent of heading.
     forward.copy(LOCAL_FORWARD).applyQuaternion(middle);
@@ -130,18 +148,19 @@ export function waterfallCameraPose(f) {
 // normal points FORWARD through the ring. Test the whole movement segment, so a
 // fast step still catches the plane even when both endpoints are far from it.
 // A start exactly on the plane cannot score again on the following step.
+// Plain numbers only: this runs for every orb on every physics step, so it makes no new objects.
 export function crossesWaterfallRing(previous, current, ring) {
-  const normal = new Vector3(ring.normal.x, ring.normal.y, ring.normal.z);
-  const length = normal.length();
+  const n = ring.normal, length = Math.hypot(n.x, n.y, n.z);
   const radius = ring.radius ?? WATERFALL_RING_RADIUS;
   if (!Number.isFinite(length) || length < 1e-12 || !Number.isFinite(radius) || radius < 0) return false;
-  normal.multiplyScalar(1 / length);
-  const center = new Vector3(ring.center.x, ring.center.y, ring.center.z);
-  const a = new Vector3(previous.x, previous.y, previous.z).sub(center);
-  const b = new Vector3(current.x, current.y, current.z).sub(center);
-  const before = a.dot(normal), after = b.dot(normal);
+  const nx = n.x / length, ny = n.y / length, nz = n.z / length, c = ring.center;
+  const ax = previous.x - c.x, ay = previous.y - c.y, az = previous.z - c.z;
+  const bx = current.x - c.x, by = current.y - c.y, bz = current.z - c.z;
+  const before = ax * nx + ay * ny + az * nz, after = bx * nx + by * ny + bz * nz;
   if (!(before < 0 && after >= 0)) return false;
-  const intersection = a.lerp(b, -before / (after - before));
-  intersection.addScaledVector(normal, -intersection.dot(normal));
-  return intersection.lengthSq() <= radius * radius + 1e-10;
+  const t = -before / (after - before);
+  let ix = ax + (bx - ax) * t, iy = ay + (by - ay) * t, iz = az + (bz - az) * t;
+  const along = ix * nx + iy * ny + iz * nz;
+  ix -= nx * along; iy -= ny * along; iz -= nz * along;
+  return ix * ix + iy * iy + iz * iz <= radius * radius + 1e-10;
 }
