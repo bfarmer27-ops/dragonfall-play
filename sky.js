@@ -66,7 +66,9 @@ function buildFogGLSL() {
   vec3 v = normalize(worldPos - camPos);
   float c = max(dot(v, FOG_SUN_DIR), 0.0);
   float s = 0.55 * pow(c, 5.0) + 0.45 * pow(c, 20.0);
-  return mix(fogColor, FOG_SUN_COLOR, s * 0.9);
+  // Underground (Emerald Falls sets a near-black fog colour inside the Hollow) the sun lobe fades out.
+  float sunLobe = smoothstep(0.05, 0.25, max(fogColor.r, max(fogColor.g, fogColor.b)));
+  return mix(fogColor, FOG_SUN_COLOR, s * 0.9 * sunLobe);
  }
  #endif
 `;

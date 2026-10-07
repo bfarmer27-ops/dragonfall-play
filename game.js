@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import {TIER, setTier, readTierSetting} from './quality.js';
 import {createRenderSystem} from './render.js';
 import {createSky} from './sky.js';
-import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=6';
+import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=7';
 import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=3';
 import {createTerrain, terrainHeight, createArchGeometry, createBoulderGeometry, createRockMaterial, worldSlope} from './terrain.js';
 import {createWater} from './water.js';
@@ -30,7 +30,10 @@ import {createAudio} from './audio.js';
 import {createSpeech, readFireWord, saveFireWord, STICKY_STATUSES} from './speech.js';
 import {createNoiseFire} from './noise-fire.js?v=1';
 import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, ROUTE_LENGTH, createRings as createWaterfallRings, createWaterfallObstacles, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
-import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=6';
+import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=7';
+// Emerald Falls hazard names for the HUD: a graze costs a shield, a fireball shatters (lava cannot be shattered).
+const HAZARD_NAMES={spire:'SPIRE',totem:'TOTEM',stalactite:'STALACTITE',crystal:'CRYSTAL',geyser:'LAVA GEYSER',root:'ROOT'};
+const HAZARD_SHATTER={spire:'SPIRE SHATTERED',totem:'TOTEM SHATTERED',stalactite:'STALACTITE SHATTERED',crystal:'CRYSTAL SHATTERED',root:'ROOT BURNED'};
 import {createFireballs} from './fireball.js';
 import {createNet} from './net.js';
 
@@ -115,7 +118,7 @@ if (WATERFALL_MAP) {
  scene.add(waterfallWorld);
  for (const chunk of terrain.chunks || []) chunk.group.visible=false;
  terrain.river.visible=false;
- waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer,scene,onThunder:near=>audio.thunder(near)});
+ waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer,scene,sky,onThunder:near=>audio.thunder(near)});
 }
 const canyonDressing = new THREE.Group();
 scene.add(canyonDressing);
@@ -234,7 +237,7 @@ const obstacles = [];
 function setWaterfallObstacle(o, n) {
  const hazard = WATERFALL_OBSTACLES[n];
  if (!hazard) { o.mesh.visible = false; return; }
- o.n=n;o.d=hazard.distance;o.x=hazard.x;o.alt=hazard.altitude;o.base=hazard.base;o.top=hazard.top;o.radius=hazard.radius;o.thickness=hazard.thickness;o.kind=hazard.kind||'spire';o.hit=false;
+ o.n=n;o.d=hazard.distance;o.x=hazard.x;o.alt=hazard.altitude;o.base=hazard.base;o.top=hazard.top;o.radius=hazard.radius;o.thickness=hazard.thickness;o.kind=hazard.kind||'spire';o.hit=false;o.hazard=hazard;
  o.mesh.position.set(hazard.x,hazard.altitude,hazard.z);
  o.mesh.scale.set(o.radius / 2, o.thickness, o.radius / 2);
  o.mesh.rotation.y = (n % 2 ? -.22 : .22);
@@ -419,7 +422,7 @@ async function start() {
  resetInputs();
  flapPhase = 0;
  flight = freshFlight();
- if (WATERFALL_MAP) {flight.surfaceHeight=waterfallEnvironment.surfaceHeight;resetWaterfallCourse();}
+ if (WATERFALL_MAP) {flight.surfaceHeight=waterfallEnvironment.surfaceHeight;flight.caveLimit=waterfallEnvironment.caveLimit;resetWaterfallCourse();}
  if (!WATERFALL_MAP) { terrain.reset(); dressing.reset(); }
  gates.forEach((g, i) => setGate(g, i));
  obstacles.forEach((o, i) => setObstacle(o, i));
@@ -754,17 +757,18 @@ function fireballHits(pos, ball) {
  if (!WATERFALL_MAP) {
   if (alt < 0) return 'water';
   if (terrainHeight(pos.x, d) > alt) return 'rock';
- } else if (waterfallEnvironment && pos.y < waterfallEnvironment.surfaceHeight(pos.x, pos.z, 2)) {
-  return 'rock';   // the ball meets the stationary valley floor, a wall or the river
+ } else if (waterfallEnvironment && (pos.y < waterfallEnvironment.surfaceHeight(pos.x, pos.z, 2) || waterfallEnvironment.inRock(pos))) {
+  return 'rock';   // the ball meets the stationary valley floor, a wall, the river, or the Hollow's rock
  }
  if (ball.owner !== 'me') return null;   // a friend's ball is only a picture here: the shooter decides its hits
  if (WATERFALL_MAP) {
   if (debug) (window.__fireLog ||= []).push([+pos.x.toFixed(1), +pos.y.toFixed(1), +pos.z.toFixed(1)]);
-  // Spires and totems are fixed world objects: test the ball against the hazard cylinder in world space.
+  // Hazards are fixed world objects: test the ball against the hazard cylinder in world space.
   for (const o of obstacles) {
+   if (o.kind === 'geyser') continue;   // a fireball cannot shatter lava
    if (o.mesh.visible && !o.hit && Math.hypot(pos.x - o.x, pos.z - o.mesh.position.z) < o.radius + 2 && pos.y > o.base && pos.y < o.top) {
     o.hit = true; o.mesh.visible = false;
-    scoreKill(o.kind === 'totem' ? 'TOTEM SHATTERED' : 'SPIRE SHATTERED');
+    scoreKill(HAZARD_SHATTER[o.kind] || 'HAZARD SHATTERED');
     return 'rock';
    }
   }
@@ -1266,14 +1270,20 @@ function updateWorld(dt) {
   }
   const forward=waterfallForward(flight);
   for(const o of obstacles){
-   const dx=o.x-current.x,dy=o.alt-current.y,dz=o.d===undefined?0:(o.mesh.position.z-current.z);
+   const dx=o.x-current.x,dy=o.alt-current.y,dz=o.mesh.position.z-current.z;
    const ahead=dx*forward.x+dy*forward.y+dz*forward.z;
-   const radial=Math.sqrt(Math.max(0,dx*dx+dy*dy+dz*dz-ahead*ahead));
-   const clearance=o.radius+4;
-   const insideHeight=current.y>o.base&&current.y<o.top;
-   if(mode==='playing'&&!o.hit&&insideHeight&&ahead>-clearance&&ahead<clearance&&radial<clearance){o.hit=true;hit((o.kind==='totem'?'TOTEM':'SPIRE')+' GRAZE');}
+   // Every hazard is a standing cylinder: the dragon's body (11 m half-width) meeting its side costs a shield.
+   // A lava geyser only counts while it is up (the environment sets activeNow).
+   const across=Math.hypot(dx,dz),insideHeight=current.y>o.base-6&&current.y<o.top+6,live=!o.hazard||o.hazard.activeNow!==false;
+   if(mode==='playing'&&!o.hit&&live&&insideHeight&&across<o.radius+11){o.hit=true;hit((HAZARD_NAMES[o.kind]||'ROCK')+' GRAZE');}
    o.mesh.visible=!o.hit&&ahead>-120&&ahead<VISIBLE_RANGE;
   }
+  // Wind rivers in the Hollow: riding one keeps the speed burst going for as long as the rider stays in it.
+  const wind=waterfallEnvironment?waterfallEnvironment.windAt(current):0;
+  if(mode==='playing'&&wind>0){
+   flight.boost=Math.max(flight.boost||0,.6);flight.boostGain=Math.max(flight.boostGain||0,.22+.18*wind);
+   if(!flight.windRiding){flight.windRiding=true;toast('WIND RIVER · RIDE IT');audio.orb(0,false);if (debug) (window.__orbEvents ||= []).push({event:'wind',z:Math.round(current.z)});}
+  } else flight.windRiding=false;
   // No route-driven transforms, recycling, spin or pulsing in this finite map.
   return;
  }

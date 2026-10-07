@@ -11,7 +11,8 @@ import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
 import {createSky, setFogConstants, fogUniforms} from './sky.js';
 import {TIER} from './quality.js';
-import {routeAt, FALL_START, FALL_END, ARC_RADIUS, ROUTE_LENGTH, PRELUDE_LENGTH, WATERFALL_RIVER_CLEARANCE, ENTRY_TOP_Y} from './waterfall-core.js';
+import {routeAt, FALL_START, FALL_END, ARC_RADIUS, ROUTE_LENGTH, PRELUDE_LENGTH, HOLLOW_LENGTH, HOLLOW_MOUTH, HOLLOW_EXIT, WATERFALL_RIVER_CLEARANCE, ENTRY_TOP_Y} from './waterfall-core.js';
+import {createHollow} from './hollow.js?v=1';
 
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -39,9 +40,11 @@ function noise3(x, y, z) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Layout. The flight starts at z = 0 among the islands; the gorge plateau begins at GORGE_Z.
+// Layout. The flight starts at z = 0 on a ledge outside the mountain; the Hollow (hollow.js) runs to
+// ISLES_Z, the Sky Isles float from ISLES_Z to GORGE_Z, where the gorge plateau begins.
 // ---------------------------------------------------------------------------------------------
 const lip = routeAt(FALL_START), exit = routeAt(FALL_END);
+export const ISLES_Z = -HOLLOW_LENGTH;
 export const GORGE_Z = -PRELUDE_LENGTH;
 export const WORLD_START_Z = GORGE_Z + 320;             // the plateau's leading cliff rises out of the cloud sea here
 export const FINISH_Z = routeAt(ROUTE_LENGTH).z;         // crossing this plane completes the course
@@ -126,7 +129,7 @@ export const ISLANDS = Object.freeze([
  {x: -125, z: -1990, r: 100, top: 1888, trees: 1},
  {x: -520, z: -150, r: 70, top: 1840}, {x: 560, z: -700, r: 60, top: 1990}, {x: -610, z: -1000, r: 80, top: 1930},
  {x: 520, z: -1250, r: 55, top: 1850}, {x: -480, z: -1600, r: 65, top: 1980}, {x: 600, z: -1950, r: 75, top: 1870},
-].map(Object.freeze));
+].map(i => Object.freeze({...i, z: i.z + ISLES_Z})));
 function islandTopAt(isl, x, z) { const d = Math.hypot(x - isl.x, z - isl.z) / isl.r; return isl.top + 9 * (1 - d * d) + 3 * noise(x * .05, z * .05); }
 
 // ---------------------------------------------------------------------------------------------
@@ -302,9 +305,16 @@ const fogVertex = `varying vec2 vUv;
  #include <fog_vertex>
  }`;
 
-export function createWaterfallEnvironment({group, renderer, scene = null, onThunder = null}) {
+export function createWaterfallEnvironment({group, renderer, scene = null, onThunder = null, sky = null}) {
  const high = TIER === 'high';
  const pending = [], textures = [], materials = [], geometries = [], surfaces = [], animated = [];
+ // Piece registry: everything built here is tagged with the stretch of route it belongs to, and update()
+ // draws only the pieces near the dragon (detail: trees, rocks, grass; terrain: ground, water, islands;
+ // landmark: far mountains and the cloud sea, never hidden). Far pieces sink into the fog before they cut off.
+ const chunks = [];
+ function register(obj, zA, zB, kind = 'detail') { chunks.push({obj, zNear: Math.max(zA, zB), zFar: Math.min(zA, zB), kind}); return obj; }
+ const BAND = 600;
+ const bandOf = z => Math.floor(-z / BAND);
  const loader = new THREE.TextureLoader();
  const tex = (name, color = false) => {
   let resolve, reject; pending.push(new Promise((a, b) => { resolve = a; reject = b; }));
@@ -360,7 +370,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   const inner = [];
   for (let r = 0; r < NZ; r++) for (let i = 0; i < NX; i++) { const a = r * (NX + 1) + i, b = a + 1, c = a + NX + 1, d = c + 1; inner.push(a, b, c, b, d, c); }
   geo.setIndex(inner); padded.dispose();
-  mesh(geo, terrainMaterial, 'valley-rock-and-forest-' + chunk);
+  register(mesh(geo, terrainMaterial, 'valley-rock-and-forest-' + chunk), start + 10, start - NZ * ROW - 10, 'terrain');
   surfaces.push({positions: geo.attributes.position, columns: NX + 1, rows: NZ, start, end: start - NZ * ROW});
  }
 
@@ -387,16 +397,10 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
  const barkColor = tex('waterfall/bark_willow_02_diff_1k.jpg', true), barkNormal = tex('waterfall/bark_willow_02_nor_gl_1k.jpg');
  const vineMat = new THREE.MeshStandardMaterial({map: barkColor, normalMap: barkNormal, normalScale: new THREE.Vector2(1.2, 1.2), color: 0x9c8a6c, roughness: .95, metalness: 0}); materials.push(vineMat);
  ISLANDS.forEach((isl, i) => {
+  // No dangling vines under the islands any more (they read as floating roots); the rocky undersides stand alone.
   const m = mesh(islandGeometry(isl, i * 3.1), terrainMaterial, 'floating-island-' + i, islandGroup);
   m.position.set(isl.x, isl.top, isl.z); m.rotation.y = hash(i, 4) * 6;
-  // Hanging vines off the underside.
-  for (let v = 0; v < (isl.r > 90 ? 6 : 3); v++) {
-   const a = hash(i * 9 + v, 21) * Math.PI * 2, len = 60 + hash(v, i) * 120, sway = 12 + hash(v + 3, i) * 25;
-   const start = new THREE.Vector3(isl.x + Math.cos(a) * isl.r * .95, isl.top - 4, isl.z + Math.sin(a) * isl.r * .95);
-   const pts = [start];
-   for (let k = 1; k <= 4; k++) pts.push(new THREE.Vector3(start.x + Math.sin(k * 1.7 + v) * sway * k / 4, start.y - len * k / 4, start.z + Math.cos(k * 1.3 + v) * sway * k / 4));
-   vineGeos.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 1.2 + hash(v, 7) * 1.4, 6, false));
-  }
+  register(m, isl.z + isl.r * 1.1, isl.z - isl.r * 1.1, 'terrain');
  });
  // The stone gate at the gorge entrance: a weathered ring the rider flies through, with two guardian pillars.
  {
@@ -404,7 +408,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   for (let i = 0; i < gp.count; i++) { const x = gp.getX(i), y = gp.getY(i), z = gp.getZ(i); const n = (noise3(x * .04 + 1, y * .04, z * .04) - .5) * 8; gp.setXYZ(i, x + n, y + n * .7, z + n); }
   gateGeo.computeVertexNormals();
   const gate = mesh(withTerrainAttributes(gateGeo, ENTRY_TOP_Y - 320, 0), terrainMaterial, 'stone-gate', islandGroup);
-  gate.position.set(0, ENTRY_TOP_Y, GORGE_Z + 60);
+  gate.position.set(0, ENTRY_TOP_Y, GORGE_Z + 60); register(gate, GORGE_Z + 200, GORGE_Z - 80, 'terrain');
   for (let v = 0; v < 7; v++) {
    const a = Math.PI * .15 + v * .3, len = 50 + hash(v, 77) * 80;
    const start = new THREE.Vector3(Math.cos(a + Math.PI) * 118, ENTRY_TOP_Y + Math.sin(a + Math.PI) * 118, GORGE_Z + 60);
@@ -412,8 +416,8 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
    vineGeos.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, 1.4, 6, false));
   }
  }
- // Every hanging vine in one mesh: one draw call instead of eighty.
- mesh(mergeGeometries(vineGeos, false), vineMat, 'island-vines', islandGroup);
+ // The gate's hanging vines in one mesh.
+ register(mesh(mergeGeometries(vineGeos, false), vineMat, 'gate-vines', islandGroup), GORGE_Z + 200, GORGE_Z - 80, 'detail');
  for (const g of vineGeos) g.dispose();
  vineGeos.length = 0;
 
@@ -507,6 +511,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   geo.setAttribute('aShore', new THREE.Float32BufferAttribute(shore, 1)); geo.setAttribute('aFlow', new THREE.Float32BufferAttribute(flowA, 1));
   geo.setIndex(indices); geo.computeVertexNormals();
   const m = mesh(geo, riverMat, 'stationary-river'); m.receiveShadow = true; riverMeshes.push(m);
+  register(m, start + 20, end - 20, 'terrain');
   surfaces.push({positions: geo.attributes.position, columns: cols, rows: n, start, end});
  }
 
@@ -583,10 +588,16 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
     #include <colorspace_fragment>
    }`});
  materials.push(cloudSeaMat); animated.push(cloudSeaMat.uniforms.uTime);
- const cloudSea = mesh(new THREE.PlaneGeometry(14000, 6400, 1, 1), cloudSeaMat, 'cloud-sea', islandGroup);
- cloudSea.rotation.x = -Math.PI / 2; cloudSea.position.set(0, CLOUD_SEA_Y, -200); cloudSea.renderOrder = -2;
+ // The cloud sea lies in front of the mountain (around the start ledge) and beyond its far side (under the
+ // Sky Isles, up to the gorge's leading cliff). None of it passes through the Hollow.
+ for (const [name, zFrom, zTo] of [['cloud-sea-ledge', 900, -HOLLOW_MOUTH], ['cloud-sea-isles', -HOLLOW_EXIT, GORGE_Z - 2400]]) {
+  const sea = mesh(new THREE.PlaneGeometry(14000, zFrom - zTo, 1, 1), cloudSeaMat, name, islandGroup);
+  sea.rotation.x = -Math.PI / 2; sea.position.set(0, CLOUD_SEA_Y, (zFrom + zTo) / 2); sea.renderOrder = -2;
+ }
  const puff = makePuffTexture(); textures.push(puff);
  const glowTex = makeGlowTexture(); textures.push(glowTex);
+ // --- The Hollow: the cave run before the islands (hollow.js) -----------------------------------------------
+ const hollow = createHollow({group, high, renderer, noise, noise3, hash, mesh, tex, textures, materials, geometries, terrainMaterial, withTerrainAttributes, fallMat, glowTex, maps, register, surfaces, CLOUD_SEA_Y, barkColor, barkNormal, fallNoise, waterNormal, animated});
  const sprayMat = new THREE.SpriteMaterial({map: puff, color: 0xd9e4e6, transparent: true, opacity: .3, depthWrite: false, fog: true});
  const mistMat = new THREE.SpriteMaterial({map: puff, color: 0xc2d2d6, transparent: true, opacity: .16, depthWrite: false, fog: true});
  const cloudPuffMat = new THREE.SpriteMaterial({map: puff, color: 0xeef1f4, transparent: true, opacity: .26, depthWrite: false, fog: true});
@@ -599,7 +610,8 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
  for (let i = 0; i < (high ? 12 : 7); i++) { const z = CURTAIN_Z - 260 - i * 150 - hash(i, 51) * 60; sprite(mistMat, meander(z) + (hash(i, 52) - .5) * riverWidth(z) * 1.4, LOWER_WATER_Y + 10 + hash(i, 53) * 12, z, 140 + hash(i, 54) * 110, 18 + hash(i, 55) * 14, .15); }
  for (let i = 0; i < 7; i++) { const z = GORGE_Z - 250 - i * 330; sprite(mistMat, meander(z) + (hash(i, 61) - .5) * 90, UPPER_WATER_Y + 8 + hash(i, 62) * 8, z, 160 + hash(i, 63) * 90, 14 + hash(i, 64) * 10, .1); }
  // Cloud puffs drifting around the islands give the cloud sea some height.
- for (let i = 0; i < (high ? 26 : 14); i++) { const z = 250 - hash(i, 71) * 2500, x = (hash(i, 72) - .5) * 1500; sprite(cloudPuffMat, x, CLOUD_SEA_Y + 30 + hash(i, 73) * 150, z, 260 + hash(i, 74) * 220, 110 + hash(i, 75) * 70, .25, islandGroup); }
+ for (let i = 0; i < (high ? 26 : 14); i++) { const z = ISLES_Z + 250 - hash(i, 71) * 2500, x = (hash(i, 72) - .5) * 1500; sprite(cloudPuffMat, x, CLOUD_SEA_Y + 30 + hash(i, 73) * 150, z, 260 + hash(i, 74) * 220, 110 + hash(i, 75) * 70, .25, islandGroup); }
+ for (let i = 0; i < (high ? 10 : 6); i++) { const z = 500 - hash(i, 76) * 1000, x = (hash(i, 77) < .5 ? -1 : 1) * (500 + hash(i, 78) * 900); sprite(cloudPuffMat, x, CLOUD_SEA_Y + 20 + hash(i, 79) * 120, z, 280 + hash(i, 74) * 200, 110 + hash(i, 75) * 60, .25, islandGroup); }
  const foamMat = new THREE.ShaderMaterial({transparent: true, depthWrite: false, fog: true,
   uniforms: {...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), foamNoise: {value: fallNoise}, uTime: {value: 0}},
   vertexShader: fogVertex,
@@ -669,12 +681,14 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   treeCount++;
  }
  for (let i = 0; i < (high ? 160 : 90); i++) { const s = islandSpot(i, 37, .8); batches[treeBatchCount - 1].push({x: s.x, y: s.y - 1, z: s.z, size: 10 + hash(i, 8) * 13, seed: 5000 + i, round: hash(i, 19) < .5}); treeCount++; }
+ batches.push(hollow.spots.trees); treeCount += hollow.spots.trees.length;   // the start ledge's firs
  batches.forEach((batch, bi) => {
   if (!batch.length) return;
+  const zNear = Math.max(...batch.map(t => t.z)) + 40, zFar = Math.min(...batch.map(t => t.z)) - 40;
   const firs = batch.filter(t => !t.round), rounds = batch.filter(t => t.round);
   const trees = new THREE.InstancedMesh(trunkGeo, bark, batch.length);
   batch.forEach((t, i) => { dummy.position.set(t.x, t.y + t.size * .5, t.z); dummy.scale.set(t.size * .32, t.size * (t.round ? .7 : 1), t.size * .32); dummy.rotation.set(0, 0, 0); dummy.updateMatrix(); trees.setMatrixAt(i, dummy.matrix); });
-  trees.name = 'fixed-forest-trunks-' + bi; trees.computeBoundingSphere(); group.add(trees);
+  trees.name = 'fixed-forest-trunks-' + bi; trees.computeBoundingSphere(); group.add(trees); register(trees, zNear, zFar, 'detail');
   if (firs.length) {
    const leaves = new THREE.InstancedMesh(leafGeo, leaf, firs.length * 12);
    firs.forEach((t, i) => {
@@ -686,7 +700,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
      leaves.setColorAt(i * 12 + j, new THREE.Color().setRGB(.62 * shade + .1, .78 * shade + .14, .55 * shade + .1));
     }
    });
-   leaves.name = 'fixed-forest-needles-' + bi; leaves.computeBoundingSphere(); group.add(leaves);
+   leaves.name = 'fixed-forest-needles-' + bi; leaves.computeBoundingSphere(); group.add(leaves); register(leaves, zNear, zFar, 'detail');
   }
   if (rounds.length) {
    const crowns = new THREE.InstancedMesh(roundGeo, shrubMat, rounds.length * 6);
@@ -699,7 +713,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
      crowns.setColorAt(i * 6 + j, new THREE.Color().setRGB(.55 * shade + .25, .75 * shade + .2, .45 * shade + .15));
     }
    });
-   crowns.name = 'fixed-forest-crowns-' + bi; crowns.computeBoundingSphere(); group.add(crowns);
+   crowns.name = 'fixed-forest-crowns-' + bi; crowns.computeBoundingSphere(); group.add(crowns); register(crowns, zNear, zFar, 'detail');
   }
  });
  // Shrubs on shores, shelves and island tops.
@@ -722,13 +736,18 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   shrubItems.push({...s, size: 5 + hash(i, 73) * 9});
  }
  for (let i = 0; i < (high ? 220 : 120); i++) { const s = islandSpot(i, 79, .9); shrubItems.push({...s, y: s.y - .4, size: 4 + hash(i, 73) * 7}); }
- if (shrubItems.length) {
-  const shrubs = new THREE.InstancedMesh(crossGeo, shrubMat, shrubItems.length);
-  shrubItems.forEach((s, i) => {
-   dummy.position.set(s.x, s.y - .4, s.z); dummy.scale.set(s.size * 1.3, s.size, s.size * 1.3); dummy.rotation.set(0, hash(s.seed, 74) * 3.2, 0); dummy.updateMatrix(); shrubs.setMatrixAt(i, dummy.matrix);
-   const t = hash(s.seed, 75); shrubs.setColorAt(i, new THREE.Color().setRGB(.62 + t * .3, .7 + t * .22, .5 + t * .25));
-  });
-  shrubs.name = 'fixed-shrubs'; shrubs.computeBoundingSphere(); group.add(shrubs);
+ {
+  // One instanced mesh per 600 m band so the bands ahead can wait until the dragon is near.
+  const bands = new Map();
+  for (const s of shrubItems) { const b = bandOf(s.z); if (!bands.has(b)) bands.set(b, []); bands.get(b).push(s); }
+  for (const [b, items] of bands) {
+   const shrubs = new THREE.InstancedMesh(crossGeo, shrubMat, items.length);
+   items.forEach((s, i) => {
+    dummy.position.set(s.x, s.y - .4, s.z); dummy.scale.set(s.size * 1.3, s.size, s.size * 1.3); dummy.rotation.set(0, hash(s.seed, 74) * 3.2, 0); dummy.updateMatrix(); shrubs.setMatrixAt(i, dummy.matrix);
+    const t = hash(s.seed, 75); shrubs.setColorAt(i, new THREE.Color().setRGB(.62 + t * .3, .7 + t * .22, .5 + t * .25));
+   });
+   shrubs.name = 'fixed-shrubs-' + b; shrubs.computeBoundingSphere(); group.add(shrubs); register(shrubs, -b * BAND + 40, -(b + 1) * BAND - 40, 'detail');
+  }
  }
 
  // --- Scanned models (Poly Haven CC0): rocks, cliff chunks, far mountainsides, ferns, dead trunks --------
@@ -773,6 +792,8 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   const s = i % 3 === 0 ? islandSpot(i, 141, .8) : shoreSpot(i, 141, 30, 520, 1.2, 8); if (!s) continue;
   trunkSpots.push({...s, size: 14 + hash(i, 142) * 14, yaw: hash(i, 143) * 6.3});
  }
+ // The start ledge and the crags beside the mountain's mouth take scanned rocks, cliff chunks, peaks and trunks too.
+ rockSpots.push(...hollow.spots.rocks); cliffSpots.push(...hollow.spots.cliffs); mountainSpots.push(...hollow.spots.mountains); trunkSpots.push(...hollow.spots.trunks);
  const gltf = new GLTFLoader();
  const modelUrl = name => new URL('./assets/waterfall/models/' + name + '.glb', import.meta.url).href;
  function loadVariants(names) {
@@ -820,23 +841,31 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   }, undefined, e => { console.warn('Emerald Falls: model ' + n + ' skipped: ' + (e && e.message || e)); resolve([]); }))))
    .then(lists => lists.flat());
  }
- function instanceSpots(variants, spots, name, {tintJitter = .2, settle = 0} = {}) {
+ function instanceSpots(variants, spots, name, {tintJitter = .2, settle = 0, cull = true} = {}) {
   if (!variants.length || !spots.length) return;
   const byVariant = variants.map(() => []);
   spots.forEach((s, i) => byVariant[s.variant !== undefined ? s.variant % variants.length : Math.floor(hash(s.seed, 151 + i) * variants.length) % variants.length].push(s));
   variants.forEach((v, vi) => {
-   const list = byVariant[vi]; if (!list.length) return;
-   const parts = v.parts || [{geometry: v.geometry, material: v.material}];
-   const meshes = parts.map(p => new THREE.InstancedMesh(p.geometry, p.material, list.length));
-   list.forEach((s, i) => {
-    const k = s.size / v.span;
-    dummy.position.set(s.x, s.y - settle * s.size, s.z); dummy.scale.set(k, k * (s.uniform ? 1 : .85 + hash(s.seed, 152) * .3), k);
-    dummy.rotation.set((s.tilt || 0) * (hash(s.seed, 153) - .5) * 2, s.yaw ?? hash(s.seed, 154) * 6.3, (s.tilt || 0) * (hash(s.seed, 155) - .5) * 2);
-    dummy.updateMatrix();
-    const t = 1 - tintJitter / 2 + hash(s.seed, 156) * tintJitter, col = new THREE.Color().setRGB(t, t * (1 - tintJitter * .15), t * (1 - tintJitter * .3));
-    for (const m of meshes) { m.setMatrixAt(i, dummy.matrix); m.setColorAt(i, col); }
-   });
-   meshes.forEach((m, pi) => { m.name = name + '-' + v.name + (parts.length > 1 ? '-part' + pi : ''); m.computeBoundingSphere(); group.add(m); });
+   const all = byVariant[vi]; if (!all.length) return;
+   // One instanced mesh per variant per 600 m band (cull) or one for the whole map (landmarks).
+   const bands = new Map();
+   for (const s of all) { const b = cull ? bandOf(s.z) : 0; if (!bands.has(b)) bands.set(b, []); bands.get(b).push(s); }
+   for (const [b, list] of bands) {
+    const parts = v.parts || [{geometry: v.geometry, material: v.material}];
+    const meshes = parts.map(p => new THREE.InstancedMesh(p.geometry, p.material, list.length));
+    list.forEach((s, i) => {
+     const k = s.size / v.span;
+     dummy.position.set(s.x, s.y - settle * s.size, s.z); dummy.scale.set(k, k * (s.uniform ? 1 : .85 + hash(s.seed, 152) * .3), k);
+     dummy.rotation.set((s.tilt || 0) * (hash(s.seed, 153) - .5) * 2, s.yaw ?? hash(s.seed, 154) * 6.3, (s.tilt || 0) * (hash(s.seed, 155) - .5) * 2);
+     dummy.updateMatrix();
+     const t = 1 - tintJitter / 2 + hash(s.seed, 156) * tintJitter, col = new THREE.Color().setRGB(t, t * (1 - tintJitter * .15), t * (1 - tintJitter * .3));
+     for (const m of meshes) { m.setMatrixAt(i, dummy.matrix); m.setColorAt(i, col); }
+    });
+    meshes.forEach((m, pi) => {
+     m.name = name + '-' + v.name + (parts.length > 1 ? '-part' + pi : '') + (cull ? '-band' + b : ''); m.computeBoundingSphere(); group.add(m);
+     if (cull) register(m, -b * BAND + 40, -(b + 1) * BAND - 40, 'detail');
+    });
+   }
   });
  }
  // Fab packs (downloaded 2026-10-07 with the Epic account on this PC): six low-poly mossy rocks, two real
@@ -850,7 +879,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
  }
  const fabIslandSpots = [];
  for (let i = 0; i < (high ? 7 : 4); i++) {
-  const side = i % 2 ? 1 : -1, z = 150 - i * 330 - hash(i, 181) * 120, x = side * (650 + hash(i, 182) * 450);
+  const side = i % 2 ? 1 : -1, z = ISLES_Z + 150 - i * 330 - hash(i, 181) * 120, x = side * (650 + hash(i, 182) * 450);
   fabIslandSpots.push({x, y: 1560 + hash(i, 183) * 420, z, size: 170 + hash(i, 184) * 110, seed: 800 + i, yaw: hash(i, 185) * 6.3, uniform: true, variant: i % 3});
  }
  // Fab "free environment props set" (Z-TR-ZTR, CC BY 4.0): the vine-wrapped orb Ryan picked becomes a shrine on the
@@ -881,9 +910,9 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   }),
   loadVariants(['fab/fab_grass']).then(v => instanceSpots(v, grassSpots, 'fab-grass', {tintJitter: .3})),
   loadGroups([high ? 'fab/fab_trees' : 'fab/fab_trees_phone']).then(v => instanceSpots(v, heroTreeSpots, 'fab-trees', {tintJitter: .2})),
-  loadGroups(['fab/fab_island_1', 'fab/fab_island_2', 'fab/fab_island_3']).then(v => instanceSpots(v, fabIslandSpots, 'fab-islands', {tintJitter: .15, settle: .55})),
+  loadGroups(['fab/fab_island_1', 'fab/fab_island_2', 'fab/fab_island_3']).then(v => instanceSpots(v, fabIslandSpots, 'fab-islands', {tintJitter: .15, settle: .55, cull: false})),
   loadVariants(['namaqualand_cliff_02', 'coastal_cliff_02', 'rock_face_01', 'rock_face_02']).then(v => instanceSpots(v, cliffSpots, 'scanned-cliffs', {tintJitter: .25})),
-  loadVariants(['mountainside']).then(v => instanceSpots(v, mountainSpots, 'scanned-mountains', {tintJitter: .2})),
+  loadVariants(['mountainside']).then(v => instanceSpots(v, mountainSpots, 'scanned-mountains', {tintJitter: .2, cull: false})),
   loadVariants(['fern_02']).then(v => instanceSpots(v, fernSpots, 'scanned-ferns', {tintJitter: .35})),
   loadVariants(['dead_tree_trunk_02']).then(v => instanceSpots(v, trunkSpots, 'scanned-trunks', {tintJitter: .25})),
  ]);
@@ -908,18 +937,19 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   for (let k = 0; k < 9; k++) {
    const a = k / 9 * Math.PI * 2, x = isl.x + Math.cos(a) * 68, z = isl.z + Math.sin(a) * 68, h = k % 4 === 2 ? 18 : 34 + hash(k, 161) * 8;
    const m = mesh(pillarGeo, terrainMaterial, 'temple-pillar', islandGroup); m.position.set(x, islandTopAt(isl, x, z) + h / 2 - 2, z); m.scale.set(2.6, h, 2.6); m.rotation.y = hash(k, 162) * 6;
+   register(m, isl.z + isl.r, isl.z - isl.r, 'detail');
   }
-  const dais = mesh(withTerrainAttributes(new THREE.CylinderGeometry(58, 64, 6, 36), isl.top - 60, 0), terrainMaterial, 'temple-dais', islandGroup); dais.position.set(isl.x, isl.top + 8, isl.z);
+  const dais = mesh(withTerrainAttributes(new THREE.CylinderGeometry(58, 64, 6, 36), isl.top - 60, 0), terrainMaterial, 'temple-dais', islandGroup); dais.position.set(isl.x, isl.top + 8, isl.z); register(dais, isl.z + isl.r, isl.z - isl.r, 'detail');
   const archGeo = new THREE.TorusGeometry(42, 4.5, 8, 40, Math.PI); const ap = archGeo.attributes.position;
   for (let i = 0; i < ap.count; i++) { const x = ap.getX(i), y = ap.getY(i), z = ap.getZ(i); const n = (noise3(x * .1, y * .1, z * .1) - .5) * 2.5; ap.setXYZ(i, x + n, y + n, z + n); }
   archGeo.computeVertexNormals();
-  const arch = mesh(withTerrainAttributes(archGeo, isl.top - 60, 0), terrainMaterial, 'temple-arch', islandGroup); arch.position.set(isl.x, isl.top + 10, isl.z - 70); arch.rotation.y = .4;
+  const arch = mesh(withTerrainAttributes(archGeo, isl.top - 60, 0), terrainMaterial, 'temple-arch', islandGroup); arch.position.set(isl.x, isl.top + 10, isl.z - 70); arch.rotation.y = .4; register(arch, isl.z + isl.r, isl.z - isl.r, 'detail');
  }
  {
   const count = high ? 520 : 260, pos = [], seed = [];
   for (let i = 0; i < count; i++) {
    const prelude = i % 3 === 0;
-   const z = prelude ? 150 - hash(i, 91) * 2250 : GORGE_Z - 100 - hash(i, 91) * (GORGE_Z - 100 - WORLD_END_Z);
+   const z = prelude ? ISLES_Z + 150 - hash(i, 91) * 2250 : GORGE_Z - 100 - hash(i, 91) * (GORGE_Z - 100 - WORLD_END_Z);
    const prof = valleyProfile(z), side = hash(i, 92) < .5 ? -1 : 1, x = prelude ? (hash(i, 93) - .5) * 700 : prof.x + side * (20 + hash(i, 93) * 220);
    if (!prelude && z < lip.z + 40 && z > CURTAIN_Z - 200) continue;
    const water = prelude ? ENTRY_TOP_Y - 120 : (z <= CURTAIN_Z ? LOWER_WATER_Y : prof.y);
@@ -961,7 +991,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
    }`});
  materials.push(birdMat); animated.push(birdMat.uniforms.uTime);
  const flocks = [];
- for (const [cx, cy, cz, radius] of [[0, ENTRY_TOP_Y + 120, -900, 420], [0, UPPER_WATER_Y + 260, GORGE_Z - 1300, 260], [-60, LOWER_WATER_Y + 220, LAKE_Z - 150, 320]]) {
+ for (const [cx, cy, cz, radius] of [[0, ENTRY_TOP_Y + 120, ISLES_Z - 900, 420], [0, UPPER_WATER_Y + 260, GORGE_Z - 1300, 260], [-60, LOWER_WATER_Y + 220, LAKE_Z - 150, 320], [-300, ENTRY_TOP_Y + 160, -120, 260]]) {
   const pos = [], flap = [], phase = [], count = high ? 18 : 10;
   for (let i = 0; i < count; i++) {
    const x = (hash(i, 2) - .5) * 120, y = (hash(i, 8) - .5) * 60, z = (hash(i, 1) - .5) * 160, s = 1.6 + hash(i, 4);
@@ -1029,6 +1059,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
  const flashLight = new THREE.DirectionalLight(0xdfe8ff, 0); flashLight.position.set(-300, 900, 200); flashLight.name = 'lightning'; group.add(flashLight, flashLight.target);
 
  function makeObstacleMesh(hazard) {
+  if (hazard.hollow) return hollow.hazardMesh(hazard);
   const base = hazard.kind === 'totem' ? totemGeo : spireGeo;
   const geo = withTerrainAttributes(base.clone(), hazard.base, 0); geometries.push(geo);
   const m = new THREE.Mesh(geo, terrainMaterial); m.name = hazard.kind === 'totem' ? 'stone-totem' : 'rock-spire';
@@ -1046,10 +1077,10 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
  const texturesReady = Promise.all(pending);
  const ready = Promise.all([texturesReady, modelsReady]).then(() => { group.userData.assetsReady = true; });
  ready.catch(e => { group.userData.assetError = String(e?.message || e); });
- group.userData = {...group.userData, forestTrees: treeCount, shrubs: shrubItems.length, rocks: rockSpots.length, cliffs: cliffSpots.length, ferns: fernSpots.length, islands: ISLANDS.length, textureSize: high ? 2048 : 1024, stationary: true, reflection: useReflection};
+ group.userData = {...group.userData, forestTrees: treeCount, shrubs: shrubItems.length, rocks: rockSpots.length, cliffs: cliffSpots.length, ferns: fernSpots.length, islands: ISLANDS.length, hollow: hollow.counts, pieces: chunks.length, textureSize: high ? 2048 : 1024, stationary: true, reflection: useReflection};
 
  function surfaceHeight(x, z, radius = 24) {
-  let top = -Infinity;
+  let top = hollow.floorAt(x, z, radius);
   for (const s of surfaces) {
    if (z - radius > s.start || z + radius < s.end) continue;
    const dz = (s.start - s.end) / s.rows, p = s.positions, n = s.columns;
@@ -1106,10 +1137,31 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
 
  const _v = new THREE.Vector3();
  let lastTime = 0, nextFlash = 18 + Math.random() * 20, flashAt = -1, thunderAt = -1, thunderNear = .5;
+ // Outside and inside looks: the sun, the sky fill and the fog cross-fade over the 300 m around each mouth.
+ const fogOut = new THREE.Color(0x66798c), fogIn = new THREE.Color(0x03070a);
+ const hemiOut = new THREE.Color(0x8db0c6), hemiIn = new THREE.Color(0x3f7a8a), groundOut = new THREE.Color(0x3b4a2c), groundIn = new THREE.Color(0x16201c);
+ let insideNow = 0;
  function update(time, flight, camera) {
   const dt = clamp(time - lastTime, 0, .1); lastTime = time;
   riverUniforms.uTime.value = time;
   for (const u of animated) u.value = time;
+  hollow.update(time);
+  const vz = flight ? flight.z : 0;
+  insideNow = hollow.insideFactor(vz);
+  if (sky) {
+   sky.sunLight.intensity = 3.2 * (1 - .96 * insideNow);
+   sky.hemiLight.intensity = lerp(1.0, .45, insideNow);
+   sky.hemiLight.color.copy(hemiOut).lerp(hemiIn, insideNow); sky.hemiLight.groundColor.copy(groundOut).lerp(groundIn, insideNow);
+  }
+  fogUniforms.fogColor.value.copy(fogOut).lerp(fogIn, insideNow);
+  fogUniforms.fogDensity.value = lerp(.00066, .0022, insideNow);
+  // Draw only the pieces of the world near the dragon (the fog has already swallowed the rest).
+  const detailAhead = insideNow > .5 ? 1100 : (high ? 1800 : 1250), terrainAhead = insideNow > .5 ? 1400 : 3200;
+  for (const c of chunks) {
+   if (c.kind === 'landmark') continue;
+   const ahead = c.kind === 'detail' ? detailAhead : terrainAhead;
+   c.obj.visible = c.zNear > vz - ahead && c.zFar < vz + 420;
+  }
   for (const s of sprites) { s.position.y = s.userData.base + Math.sin(time * .25 * s.userData.drift + s.userData.base) * 4 * s.userData.drift; }
   for (const g of shrineGlows) g.sprite.material.opacity = .38 + .2 * Math.sin(time * 1.7 + g.seed);
   for (const f of flocks) { const a = time * .05 + f.phase; f.birds.position.set(f.cx + Math.cos(a) * f.radius, f.cy + Math.sin(a * 2.3) * 18, f.cz + Math.sin(a) * f.radius * .6); f.birds.rotation.y = -a + Math.PI / 2; }
@@ -1135,11 +1187,14 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   if (time > nextFlash) { flashAt = time; nextFlash = time + 20 + Math.random() * 25; thunderNear = .35 + Math.random() * .65; thunderAt = time + 1.2 + (1 - thunderNear) * 3; }
   if (flashAt >= 0) {
    const f = time - flashAt;
-   flashLight.intensity = f < .08 ? 7 : f < .16 ? 1.5 : f < .26 ? 5 : f < .4 ? 1 : 0;
+   flashLight.intensity = (f < .08 ? 7 : f < .16 ? 1.5 : f < .26 ? 5 : f < .4 ? 1 : 0) * (1 - insideNow);
    if (f > .45) flashAt = -1;
   }
-  if (thunderAt >= 0 && time > thunderAt) { thunderAt = -1; if (onThunder) onThunder(thunderNear); }
-  if (camera && flight) renderReflection(camera, flight.z > CURTAIN_Z - 20 ? UPPER_WATER_Y : LOWER_WATER_Y);
+  if (thunderAt >= 0 && time > thunderAt) { thunderAt = -1; if (onThunder) onThunder(thunderNear * (1 - insideNow * .7)); }
+  if (camera && flight) {
+   if (insideNow > .5 || flight.z > ISLES_Z + 200) riverUniforms.uReflMix.value = 0;   // no river in sight yet
+   else renderReflection(camera, flight.z > CURTAIN_Z - 20 ? UPPER_WATER_Y : LOWER_WATER_Y);
+  }
  }
 
  function dispose() {
@@ -1147,7 +1202,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   if (reflectTarget) reflectTarget.dispose();
   group.clear();
  }
- return {ready, terrainMaterial, textures, surfaceHeight, createPortal, makeObstacleMesh, burst, portals, update, dispose, islands: ISLANDS};
+ return {ready, terrainMaterial, textures, surfaceHeight, caveLimit: hollow.caveLimit, inRock: hollow.inRock, windAt: hollow.windAt, insideFactor: hollow.insideFactor, createPortal, makeObstacleMesh, burst, portals, update, dispose, islands: ISLANDS, chunks};
 }
 
 // ---------------------------------------------------------------------------------------------

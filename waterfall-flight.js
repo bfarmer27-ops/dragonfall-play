@@ -82,7 +82,9 @@ export function stepWaterfallFlight(f, left, right, dt) {
     forward.copy(LOCAL_FORWARD).applyQuaternion(middle);
     const previous={x:f.x,y:f.alt,z:f.z};
     const proposed={x:f.x+forward.x*f.speed*step,y:f.alt+forward.y*f.speed*step,z:f.z+forward.z*f.speed*step};
-    const next=limitWaterfallMovement(previous,proposed,f.surfaceHeight);
+    let next=limitWaterfallMovement(previous,proposed,f.surfaceHeight);
+    // Inside the Hollow the environment also keeps the dragon off the tunnel's ceiling and side walls.
+    if (typeof f.caveLimit === 'function') { const kept = f.caveLimit(previous, next); if (kept) next = {...next, x: kept.x, y: kept.y, z: kept.z, active: next.active || !!kept.active}; }
     f.x=next.x;f.alt=next.y;f.z=next.z;
     f.bumperActive ||= next.active;
     f.distance += next.active?Math.hypot(f.x-previous.x,f.alt-previous.y,f.z-previous.z):f.speed*step;

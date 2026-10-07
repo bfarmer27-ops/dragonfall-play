@@ -16,4 +16,5 @@ shrunk with Blender): "Flying Islands Free Set" by LapaModels (fab_island_1-3, l
 "Game ready grass" by Charlie catling (fab_grass, listing ce4a3934-00e7-4343-8553-8667d4c4bd1c);
 "free environment props set" by Z-TR-ZTR (fab_prop_0/2/4/6/8, listing 159ef019-27e6-4b01-be4e-fad4132cb3c3).
 Credit line: Models by LapaModels, Nicholas 3D, Stompy Circles, Charlie catling and Z-TR-ZTR via Fab, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+The Hollow (2026-10-07, hollow.js) is drawn in code with the same Poly Haven textures: tunnel, crystals, lava, embers, roots, fungus, wind rivers, mountain face and ledge. No new outside files.
 License: https://polyhaven.com/license ; asset hashes and texture usage: docs/WATERFALL-ASSETS.md in the source repository.

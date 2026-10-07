@@ -16,8 +16,20 @@ import {
   WATERFALL_OPENING_RING_DISTANCES,
   WATERFALL_PRELUDE_RING_DISTANCES,
   PRELUDE_LENGTH,
+  HOLLOW_LENGTH,
+  HOLLOW_MOUTH,
+  HOLLOW_EXIT,
+  HOLLOW_RING_CUES,
+  HOLLOW_BONUS_ORBS,
+  HOLLOW_HAZARDS,
+  HOLLOW_WIND_RIVERS,
+  HOLLOW_WIND_RADIUS,
+  hollowPath,
+  hollowWindPoint,
+  ENTRY_TOP_Y,
   WATERFALL_BONUS_ORBS,
   WATERFALL_BONUS_VALUE,
+  WATERFALL_RING_RADIUS,
   WATERFALL_SPIRE_DISTANCES,
   WATERFALL_TOTEM_DISTANCES,
   WATERFALL_BOOST_SECONDS,
@@ -36,7 +48,8 @@ const close = (a, b, epsilon = 1e-6) => Math.abs(a - b) <= epsilon;
 
 setSpeedMultiplier(7);
 const rings = createRings(7);
-const cues = rings.filter(r => !r.bonus), bonuses = rings.filter(r => r.bonus);
+const hollowRings = rings.filter(r => r.hollow), outside = rings.filter(r => !r.hollow);
+const cues = outside.filter(r => !r.bonus), bonuses = outside.filter(r => r.bonus);
 const approach = rings.find(r => close(r.distance, WATERFALL_APPROACH_RING_DISTANCE));
 const turn = rings.find(r => close(r.distance, WATERFALL_TURN_RING_DISTANCE));
 const exit = rings.find(r => close(r.distance, WATERFALL_EXIT_RING_DISTANCE));
@@ -44,10 +57,11 @@ const descentFirst = rings.find(r => close(r.distance, WATERFALL_DESCENT_RING_DI
 const descentFollow = rings.find(r => close(r.distance, WATERFALL_DESCENT_FOLLOW_RING_DISTANCE));
 assert.equal(DEFAULT_SPEED_MULTIPLIER, 12, 'the default waterfall speed is 12x');
 assert.equal(cues.length, 11, 'three Sky Isles cues plus the eight planned waterfall cues');
-assert.equal(bonuses.length, WATERFALL_BONUS_ORBS.length, 'every golden bonus orb is placed');
-assert.equal(rings.length, 13, 'eleven cues plus two golden orbs');
+assert.equal(bonuses.length, WATERFALL_BONUS_ORBS.length, 'every golden bonus orb outside the Hollow is placed');
+assert.equal(hollowRings.length, HOLLOW_RING_CUES.length + HOLLOW_BONUS_ORBS.length, 'every Hollow cue and golden orb is placed');
+assert.equal(rings.length, 13 + hollowRings.length, 'eleven cues plus two golden orbs after the Hollow');
 for (const distance of WATERFALL_PRELUDE_RING_DISTANCES) {
- assert.ok(distance < PRELUDE_LENGTH, 'prelude cues sit among the floating islands before the gorge');
+ assert.ok(distance > HOLLOW_LENGTH && distance < PRELUDE_LENGTH, 'prelude cues sit among the floating islands, after the Hollow and before the gorge');
  assert.ok(rings.some(r => close(r.distance, distance)), 'each prelude ring exists');
 }
 assert.ok(FALL_START > PRELUDE_LENGTH + 2000, 'the gorge keeps its full run-up after the prelude');
@@ -83,22 +97,64 @@ const safeDescentZ = routeAt(FALL_START).z - (ARC_RADIUS - 60) - WATERFALL_DESCE
 assert.ok(descent.every(r => r.z <= safeDescentZ + 1e-6), 'descent cues stay in the far plane');
 assert.equal(descentFirst.z, descentFollow.z, 'descent cues stay in one plane');
 
-// Designed hazards: four spires in the gorge slalom before the fall, three totems in the lower river after it.
+// The Hollow: the cave's centre line starts and ends at the cruise height, on the route's line, and every
+// cue and golden orb sits inside the clear radius so the whole ring can be flown through.
+for (const d of [0, HOLLOW_MOUTH, HOLLOW_EXIT, HOLLOW_LENGTH]) { const p = hollowPath(d); assert.ok(close(p.y, ENTRY_TOP_Y, 1e-6) && close(p.x, 0, 1e-6), 'the Hollow begins and ends on the route line at ' + d); }
+let deepest = 0, tightest = Infinity, lastP = hollowPath(0);
+for (let d = 1; d <= HOLLOW_LENGTH; d += 1) {
+ const p = hollowPath(d);
+ assert.ok(Math.abs(p.x - lastP.x) < 1.5 && Math.abs(p.y - lastP.y) < 1.5 && Math.abs(p.r - lastP.r) < 3, 'the tunnel changes smoothly at ' + d);
+ if (p.inside) { deepest = Math.max(deepest, ENTRY_TOP_Y - p.y); tightest = Math.min(tightest, p.clear); assert.ok(p.r >= 100, 'the tunnel is never narrower than 100 m at ' + d); }
+ lastP = p;
+}
+assert.ok(deepest > 400, 'the shaft dives well below the cruise height');
+assert.ok(tightest >= 48, 'the clear radius always fits the 24 m dragon with room (' + tightest.toFixed(0) + ')');
+for (const r of hollowRings) {
+ const p = hollowPath(r.distance), off = Math.hypot(r.x - p.x, r.altitude - p.y);
+ assert.ok(off + r.radius <= p.clear + 1e-6 || !p.inside, 'Hollow ring at ' + r.distance + ' fits inside the clear radius');
+ assert.ok(r.altitude - r.radius > p.floor + 6 || !p.inside, 'Hollow ring at ' + r.distance + ' clears the floor');
+ assert.equal(r.value, r.bonus ? WATERFALL_BONUS_VALUE : 1, 'Hollow orb values');
+}
+assert.ok(hollowRings.some(r => r.distance < HOLLOW_MOUTH), 'a cue leads into the mouth');
+assert.ok(hollowRings.some(r => close(r.distance, HOLLOW_EXIT)), 'a cue marks the exit');
+
+// Designed hazards: four spires in the gorge slalom before the fall, three totems in the lower river after it,
+// and twelve Hollow hazards that leave a clear line past each one.
 const obstacles = createWaterfallObstacles();
-const spires = obstacles.filter(o => o.kind === 'spire'), totems = obstacles.filter(o => o.kind === 'totem');
+const spires = obstacles.filter(o => o.kind === 'spire'), totems = obstacles.filter(o => o.kind === 'totem'), hollowHazards = obstacles.filter(o => o.hollow), river = obstacles.filter(o => !o.hollow);
 assert.equal(spires.length, WATERFALL_SPIRE_DISTANCES.length, 'every spire is placed');
 assert.equal(totems.length, WATERFALL_TOTEM_DISTANCES.length, 'every totem is placed');
+assert.equal(hollowHazards.length, HOLLOW_HAZARDS.length, 'every Hollow hazard is placed');
 assert.ok(spires.every(o => o.distance > PRELUDE_LENGTH + 600 && o.distance < FALL_START - 300), 'spires stand in the gorge, after the islands and before the approach cue');
 assert.ok(totems.every(o => o.distance > FALL_END + 200), 'totems stand in the river after the fall');
-assert.ok(obstacles.every(o => Math.abs(o.side) === 1 && o.x * o.side > 0 && o.radius >= 14), 'hazards come from both sides with a real footprint');
-assert.ok(obstacles.every(o => close(o.base, routeAt(o.distance).y - WATERFALL_RIVER_CLEARANCE)), 'hazards start at the river');
-assert.ok(obstacles.every(o => o.top > routeAt(o.distance).y && o.top > o.base), 'hazards rise into the flight corridor');
+assert.ok(river.every(o => Math.abs(o.side) === 1 && o.x * o.side > 0 && o.radius >= 14), 'river hazards come from both sides with a real footprint');
+assert.ok(river.every(o => close(o.base, routeAt(o.distance).y - WATERFALL_RIVER_CLEARANCE)), 'river hazards start at the river');
+assert.ok(obstacles.every(o => o.top > o.base), 'every hazard has height');
+assert.ok(river.every(o => o.top > routeAt(o.distance).y), 'river hazards rise into the flight corridor');
 for (let i = 1; i < spires.length; i++) assert.notEqual(spires[i].side, spires[i - 1].side, 'spires alternate sides for a slalom');
-assert.ok(obstacles.every(o => Math.abs(o.x) + o.radius < 64), 'every hazard leaves a clear line past it inside the river');
+assert.ok(river.every(o => Math.abs(o.x) + o.radius < 64), 'every river hazard leaves a clear line past it inside the river');
+for (let i = 1; i < obstacles.length; i++) assert.ok(obstacles[i].distance >= obstacles[i - 1].distance, 'hazards are ordered along the course');
+for (const o of hollowHazards) {
+ const p = hollowPath(o.distance);
+ assert.ok(o.distance > HOLLOW_MOUTH + 200 && o.distance < HOLLOW_EXIT - 200, 'Hollow hazards stand inside the cave');
+ assert.ok(Math.abs(o.x - p.x) - o.radius < p.clear, 'Hollow hazard at ' + o.distance + ' reaches into the flyable tunnel');
+ const line = p.clear + (Math.abs(o.x - p.x) - o.radius);   // room on the far side of the hazard
+ assert.ok(line >= 60, 'Hollow hazard at ' + o.distance + ' leaves a clear line of at least 60 m (' + line.toFixed(0) + ')');
+ assert.ok(o.base < p.y + 30 && o.top > p.y - 30, 'Hollow hazard at ' + o.distance + ' crosses the cruise line');
+ if (o.kind === 'geyser') assert.ok(o.period > o.up && o.up > 1, 'geysers rest between eruptions');
+}
+for (const river of HOLLOW_WIND_RIVERS) {
+ for (let i = 0; i < river.points.length; i++) {
+  const w = hollowWindPoint(river, i), p = hollowPath(w.d);
+  assert.ok(Math.hypot(w.x - p.x, w.y - p.y) + HOLLOW_WIND_RADIUS * .5 <= p.clear + 1e-6, 'wind river ' + river.name + ' point ' + i + ' lies inside the clear radius');
+  assert.ok(w.y > p.floor + 12, 'wind river ' + river.name + ' stays off the floor');
+  if (i) assert.ok(river.points[i][0] > river.points[i - 1][0], 'wind river points run forward');
+ }
+}
 
 setSpeedMultiplier(15);
 assert.equal(getSpeedMultiplier(), 15, 'the waterfall speed setting reaches 15x');
-assert.equal(createRings(15).length, 13, '15x keeps the same thirteen orbs');
+assert.equal(createRings(15).length, rings.length, '15x keeps the same orbs');
 
 setSpeedMultiplier(7);
 const flight = {};
@@ -128,8 +184,15 @@ for (let i = 0; i < 300; i++) stepWaterfallFlight(flight, 0, 0, 1 / 120);
 assert.equal(flight.boost, 0, 'the burst runs out');
 assert.ok(close(flight.speed, cruise, 1e-9), 'after the burst the flight is back at the chosen speed');
 
+// The cave limit hook: a limiter supplied by the environment can move the dragon back inside the tunnel.
+const caveFlight = initializeWaterfallFlight({});
+caveFlight.caveLimit = (previous, next) => ({x: Math.min(next.x, 5), y: next.y, z: next.z, active: next.x > 5});
+caveFlight.x = 4.5;
+for (let i = 0; i < 200; i++) stepWaterfallFlight(caveFlight, 1, -1, 1 / 120);
+assert.ok(caveFlight.x <= 5 + 1e-9, 'the cave limit holds the dragon inside (' + caveFlight.x.toFixed(2) + ')');
+
 assert.equal(normalizeThumbInput(700, 835, 100, 844), -1, 'bottom edge is maximum down');
 assert.equal(normalizeThumbInput(700, 8, 100, 844), 1, 'top edge is maximum up');
 assert.ok(Math.abs(normalizeThumbInput(700, 650, 100, 844) - .4897959183673469) < 1e-6, 'normal thumb travel keeps its scaled value');
 
-console.log(`waterfall-course: ${cues.length} orb cues + ${bonuses.length} golden orbs; ${spires.length} spires + ${totems.length} totems; boost ${boostGainForStreak(1)}..${boostGainForStreak(50)}; speed 15x; edge thumb saturation passed`);
+console.log(`waterfall-course: ${hollowRings.length} Hollow orbs + ${cues.length} orb cues + ${bonuses.length} golden orbs; ${hollowHazards.length} Hollow hazards + ${spires.length} spires + ${totems.length} totems; ${HOLLOW_WIND_RIVERS.length} wind rivers; boost ${boostGainForStreak(1)}..${boostGainForStreak(50)}; speed 15x; cave limit; edge thumb saturation passed`);
