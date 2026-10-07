@@ -9,4 +9,11 @@ Scanned models in assets/waterfall/models (Poly Haven CC0, decimated and shrunk 
 boulder_01, rock_moss_set_01, rock_moss_set_02, namaqualand_boulder_02, rock_face_01, rock_face_02, rock_09 (rocks);
 namaqualand_cliff_02, coastal_cliff_02 (cliff chunks); mountainside (far mountains); dead_tree_trunk_02; fern_02.
 https://polyhaven.com/models
+Fab packs in assets/waterfall/models/fab (downloaded 2026-10-07 from https://www.fab.com, all Creative Commons Attribution 4.0,
+shrunk with Blender): "Flying Islands Free Set" by LapaModels (fab_island_1-3, listing 6f608004-0f96-42bd-b61e-6da04b9ebbd0);
+"More Realistic Trees Free!" by Nicholas 3D (fab_trees and the smaller fab_trees_phone, listing d9a40b15-46e7-41f9-ac46-99b487ddea60);
+"lowpoly Realistic Rocks Pack" by Stompy Circles (fab_rocks, listing df552ecd-017e-475d-9e7f-d1637e251fd3);
+"Game ready grass" by Charlie catling (fab_grass, listing ce4a3934-00e7-4343-8553-8667d4c4bd1c);
+"free environment props set" by Z-TR-ZTR (fab_prop_0/2/4/6/8, listing 159ef019-27e6-4b01-be4e-fad4132cb3c3).
+Credit line: Models by LapaModels, Nicholas 3D, Stompy Circles, Charlie catling and Z-TR-ZTR via Fab, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
 License: https://polyhaven.com/license ; asset hashes and texture usage: docs/WATERFALL-ASSETS.md in the source repository.

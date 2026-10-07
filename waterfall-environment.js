@@ -586,6 +586,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
  const cloudSea = mesh(new THREE.PlaneGeometry(14000, 6400, 1, 1), cloudSeaMat, 'cloud-sea', islandGroup);
  cloudSea.rotation.x = -Math.PI / 2; cloudSea.position.set(0, CLOUD_SEA_Y, -200); cloudSea.renderOrder = -2;
  const puff = makePuffTexture(); textures.push(puff);
+ const glowTex = makeGlowTexture(); textures.push(glowTex);
  const sprayMat = new THREE.SpriteMaterial({map: puff, color: 0xd9e4e6, transparent: true, opacity: .3, depthWrite: false, fog: true});
  const mistMat = new THREE.SpriteMaterial({map: puff, color: 0xc2d2d6, transparent: true, opacity: .16, depthWrite: false, fog: true});
  const cloudPuffMat = new THREE.SpriteMaterial({map: puff, color: 0xeef1f4, transparent: true, opacity: .26, depthWrite: false, fog: true});
@@ -793,25 +794,94 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   }, undefined, e => { console.warn('Emerald Falls: model ' + n + ' skipped: ' + (e && e.message || e)); resolve([]); }))))
    .then(lists => lists.flat());
  }
+ // Whole objects (a tree = bark mesh + leaf meshes): one variant per top-level node, keeping every part
+ // in the node's own frame so the parts stay together; the base sits at y = 0.
+ function loadGroups(names) {
+  return Promise.all(names.map(n => new Promise(resolve => gltf.load(modelUrl(n), g => {
+   const out = [];
+   g.scene.updateMatrixWorld(true);
+   const roots = g.scene.children.filter(c => { let has = false; c.traverse(o => { if (o.isMesh) has = true; }); return has; });
+   for (const root of roots) {
+    const parts = [], box = new THREE.Box3();
+    root.traverse(o => {
+     if (!o.isMesh) return;
+     const geo = o.geometry.clone(); geo.applyMatrix4(o.matrixWorld); geo.computeBoundingBox(); box.union(geo.boundingBox);
+     const mat = o.material.clone(); mat.side = mat.transparent || mat.alphaTest > 0 ? THREE.DoubleSide : THREE.FrontSide; if (mat.alphaTest === 0 && mat.transparent) { mat.transparent = false; mat.alphaTest = .45; }
+     for (const t of [mat.map, mat.normalMap, mat.roughnessMap, mat.aoMap, mat.metalnessMap]) if (t) { t.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy()); textures.push(t); }
+     geometries.push(geo); materials.push(mat); parts.push({geometry: geo, material: mat});
+    });
+    if (!parts.length) continue;
+    const c = new THREE.Vector3(); box.getCenter(c);
+    for (const p of parts) p.geometry.translate(-c.x, -box.min.y, -c.z);
+    const span = Math.max(box.max.x - box.min.x, box.max.z - box.min.z, box.max.y - box.min.y);
+    out.push({parts, span, name: n + '-' + (root.name || out.length)});
+   }
+   resolve(out);
+  }, undefined, e => { console.warn('Emerald Falls: model ' + n + ' skipped: ' + (e && e.message || e)); resolve([]); }))))
+   .then(lists => lists.flat());
+ }
  function instanceSpots(variants, spots, name, {tintJitter = .2, settle = 0} = {}) {
   if (!variants.length || !spots.length) return;
   const byVariant = variants.map(() => []);
-  spots.forEach((s, i) => byVariant[Math.floor(hash(s.seed, 151 + i) * variants.length) % variants.length].push(s));
+  spots.forEach((s, i) => byVariant[s.variant !== undefined ? s.variant % variants.length : Math.floor(hash(s.seed, 151 + i) * variants.length) % variants.length].push(s));
   variants.forEach((v, vi) => {
    const list = byVariant[vi]; if (!list.length) return;
-   const m = new THREE.InstancedMesh(v.geometry, v.material, list.length);
+   const parts = v.parts || [{geometry: v.geometry, material: v.material}];
+   const meshes = parts.map(p => new THREE.InstancedMesh(p.geometry, p.material, list.length));
    list.forEach((s, i) => {
     const k = s.size / v.span;
-    dummy.position.set(s.x, s.y - settle * s.size, s.z); dummy.scale.set(k, k * (.85 + hash(s.seed, 152) * .3), k);
+    dummy.position.set(s.x, s.y - settle * s.size, s.z); dummy.scale.set(k, k * (s.uniform ? 1 : .85 + hash(s.seed, 152) * .3), k);
     dummy.rotation.set((s.tilt || 0) * (hash(s.seed, 153) - .5) * 2, s.yaw ?? hash(s.seed, 154) * 6.3, (s.tilt || 0) * (hash(s.seed, 155) - .5) * 2);
-    dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
-    const t = 1 - tintJitter / 2 + hash(s.seed, 156) * tintJitter; m.setColorAt(i, new THREE.Color().setRGB(t, t * (1 - tintJitter * .15), t * (1 - tintJitter * .3)));
+    dummy.updateMatrix();
+    const t = 1 - tintJitter / 2 + hash(s.seed, 156) * tintJitter, col = new THREE.Color().setRGB(t, t * (1 - tintJitter * .15), t * (1 - tintJitter * .3));
+    for (const m of meshes) { m.setMatrixAt(i, dummy.matrix); m.setColorAt(i, col); }
    });
-   m.name = name + '-' + v.name; m.computeBoundingSphere(); group.add(m);
+   meshes.forEach((m, pi) => { m.name = name + '-' + v.name + (parts.length > 1 ? '-part' + pi : ''); m.computeBoundingSphere(); group.add(m); });
   });
  }
+ // Fab packs (downloaded 2026-10-07 with the Epic account on this PC): six low-poly mossy rocks, two real
+ // broadleaf trees as hero trees beside the route and on the islands, and three painted fantasy islands far
+ // out over the cloud sea (their cartoon style reads as distant sky gardens, so they never sit by the route).
+ const fabRockSpots = rockSpots.filter((s, i) => i % 3 === 0).map(s => ({...s, seed: s.seed + 7000}));
+ const heroTreeSpots = [];
+ for (let i = 0; i < (high ? 26 : 10); i++) {
+  const s = i % 2 === 0 ? islandSpot(i, 171, .7) : shoreSpot(i, 171, 40, 420, 1.1, 7); if (!s) continue;
+  heroTreeSpots.push({...s, y: s.y - .5, size: 24 + hash(i, 172) * 14, uniform: true});
+ }
+ const fabIslandSpots = [];
+ for (let i = 0; i < (high ? 7 : 4); i++) {
+  const side = i % 2 ? 1 : -1, z = 150 - i * 330 - hash(i, 181) * 120, x = side * (650 + hash(i, 182) * 450);
+  fabIslandSpots.push({x, y: 1560 + hash(i, 183) * 420, z, size: 170 + hash(i, 184) * 110, seed: 800 + i, yaw: hash(i, 185) * 6.3, uniform: true, variant: i % 3});
+ }
+ // Fab "free environment props set" (Z-TR-ZTR, CC BY 4.0): the vine-wrapped orb Ryan picked becomes a shrine on the
+ // temple dais and two island tops (with its own green glow), the vine tree stands on island tops, and its mossy
+ // rock pillar and rock cluster join the shore rocks (tinted toward moss; the raw textures are very pale).
+ const temple = ISLANDS.find(i => i.temple);
+ const shrineSpots = [
+  {x: temple.x, z: temple.z, y: temple.top + 11, size: 22, seed: 3001, yaw: .6, uniform: true, variant: 0},
+  {...islandSpot(3, 191, .25), size: 15, seed: 3002, uniform: true, variant: 0},
+  {...islandSpot(8, 193, .3), size: 15, seed: 3003, uniform: true, variant: 0},
+  ...[1, 2, 5, 6].map((i, k) => ({...islandSpot(i, 195 + k, .6), size: 17 + hash(k, 196) * 6, seed: 3100 + k, uniform: true, variant: 1})),
+  ...Array.from({length: high ? 14 : 7}, (_, k) => { const s = shoreSpot(k, 201, 6, 120, 1.4, 8); return s ? {...s, y: s.y - 1, size: 9 + hash(k, 202) * 9, seed: 3200 + k, variant: 2} : null; }).filter(Boolean),
+  ...Array.from({length: high ? 18 : 8}, (_, k) => { const s = shoreSpot(k, 211, 2, 60, 1.3, 7); return s ? {...s, y: s.y - .5, size: 8 + hash(k, 212) * 8, seed: 3300 + k, variant: 3} : null; }).filter(Boolean),
+ ];
+ const shrineGlows = [];
+ for (const s of shrineSpots.filter(x => x.variant === 0)) {
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({map: glowTex, color: 0x7dffa8, transparent: true, opacity: .5, depthWrite: false, blending: THREE.AdditiveBlending}));
+  materials.push(glow.material); glow.scale.set(s.size * 1.6, s.size * 1.6, 1); glow.position.set(s.x, s.y + s.size * .58, s.z); glow.name = 'shrine-glow'; group.add(glow); shrineGlows.push({sprite: glow, seed: s.seed});
+ }
+ const grassSpots = [];
+ for (let i = 0; i < (high ? 520 : 200); i++) { const s = shoreSpot(i, 221, 1, 30, 1.2, 6); if (s) grassSpots.push({...s, y: s.y - .2, size: 3 + hash(i, 222) * 2.5}); }
  const modelsReady = Promise.all([
   loadVariants(['rock_moss_set_01', 'rock_moss_set_02', 'namaqualand_boulder_02', 'rock_09', 'boulder_01']).then(v => instanceSpots(v, rockSpots, 'scanned-rocks', {tintJitter: .3})),
+  loadVariants(['fab/fab_rocks']).then(v => instanceSpots(v, fabRockSpots, 'fab-rocks', {tintJitter: .3})),
+  loadGroups(['fab/fab_prop_2', 'fab/fab_prop_0', 'fab/fab_prop_6', 'fab/fab_prop_4']).then(v => {
+   for (const p of v) for (const part of p.parts) { if (/prop_6|prop_4/.test(p.name)) part.material.color.setRGB(.62, .68, .5); part.material.roughness = .9; }
+   instanceSpots(v, shrineSpots, 'fab-props', {tintJitter: .12});
+  }),
+  loadVariants(['fab/fab_grass']).then(v => instanceSpots(v, grassSpots, 'fab-grass', {tintJitter: .3})),
+  loadGroups([high ? 'fab/fab_trees' : 'fab/fab_trees_phone']).then(v => instanceSpots(v, heroTreeSpots, 'fab-trees', {tintJitter: .2})),
+  loadGroups(['fab/fab_island_1', 'fab/fab_island_2', 'fab/fab_island_3']).then(v => instanceSpots(v, fabIslandSpots, 'fab-islands', {tintJitter: .15, settle: .55})),
   loadVariants(['namaqualand_cliff_02', 'coastal_cliff_02', 'rock_face_01', 'rock_face_02']).then(v => instanceSpots(v, cliffSpots, 'scanned-cliffs', {tintJitter: .25})),
   loadVariants(['mountainside']).then(v => instanceSpots(v, mountainSpots, 'scanned-mountains', {tintJitter: .2})),
   loadVariants(['fern_02']).then(v => instanceSpots(v, fernSpots, 'scanned-ferns', {tintJitter: .35})),
@@ -845,7 +915,6 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   archGeo.computeVertexNormals();
   const arch = mesh(withTerrainAttributes(archGeo, isl.top - 60, 0), terrainMaterial, 'temple-arch', islandGroup); arch.position.set(isl.x, isl.top + 10, isl.z - 70); arch.rotation.y = .4;
  }
- const glowTex = makeGlowTexture(); textures.push(glowTex);
  {
   const count = high ? 520 : 260, pos = [], seed = [];
   for (let i = 0; i < count; i++) {
@@ -1042,6 +1111,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   riverUniforms.uTime.value = time;
   for (const u of animated) u.value = time;
   for (const s of sprites) { s.position.y = s.userData.base + Math.sin(time * .25 * s.userData.drift + s.userData.base) * 4 * s.userData.drift; }
+  for (const g of shrineGlows) g.sprite.material.opacity = .38 + .2 * Math.sin(time * 1.7 + g.seed);
   for (const f of flocks) { const a = time * .05 + f.phase; f.birds.position.set(f.cx + Math.cos(a) * f.radius, f.cy + Math.sin(a * 2.3) * 18, f.cz + Math.sin(a) * f.radius * .6); f.birds.rotation.y = -a + Math.PI / 2; }
   let lit = 0;
   for (const p of portals) {
