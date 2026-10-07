@@ -42,7 +42,8 @@ import {
   getSpeedMultiplier,
 } from '../waterfall-core.js';
 import {normalizeThumbInput} from '../control-settings.js';
-import {initializeWaterfallFlight, stepWaterfallFlight, applyOrbBoost, waterfallBoostStrength} from '../waterfall-flight.js';
+import {initializeWaterfallFlight, stepWaterfallFlight, applyOrbBoost, waterfallBoostStrength, WATERFALL_TURN_RADIUS, WATERFALL_PITCH_RADIUS} from '../waterfall-flight.js';
+import {limitWaterfallMovement, WATERFALL_BUMPER_RADIUS} from '../waterfall-bumper.js';
 
 const close = (a, b, epsilon = 1e-6) => Math.abs(a - b) <= epsilon;
 
@@ -190,6 +191,34 @@ caveFlight.caveLimit = (previous, next) => ({x: Math.min(next.x, 5), y: next.y, 
 caveFlight.x = 4.5;
 for (let i = 0; i < 200; i++) stepWaterfallFlight(caveFlight, 1, -1, 1 / 120);
 assert.ok(caveFlight.x <= 5 + 1e-9, 'the cave limit holds the dragon inside (' + caveFlight.x.toFixed(2) + ')');
+
+// Turning (Ryan, 2026-10-07: turn faster). Full bank for one second turns speed/240 radians at every speed;
+// climb and dive keep their old radius (360 m / 1.5).
+assert.equal(WATERFALL_TURN_RADIUS, 240, 'left/right turn radius is 240 m');
+assert.equal(WATERFALL_PITCH_RADIUS, ARC_RADIUS / 1.5, 'climb/dive radius is unchanged');
+for (const speed of [6, 15]) {
+ setSpeedMultiplier(speed);
+ const turner = initializeWaterfallFlight({});
+ for (let i = 0; i < 120; i++) stepWaterfallFlight(turner, -1, 1, 1 / 120);
+ const expected = WATERFALL_CRUISE_SPEED * speed / WATERFALL_TURN_RADIUS;
+ assert.ok(Math.abs(turner.yaw - expected) < .02, `full bank for 1 s at ${speed}x turns ${expected.toFixed(2)} rad (got ${turner.yaw.toFixed(2)})`);
+}
+
+// Bumper: a blocked move slides instead of freezing (Ryan, 2026-10-07: the dragon froze in front of the gold orb).
+// A ground step 30 m high starts at z = -5; the dragon flies level at it. It must climb over and keep going.
+const step = (x, z) => (z <= -5 ? 30 : 0);
+let at = {x: 0, y: 50, z: 0};
+for (let i = 0; i < 20; i++) {
+ const next = limitWaterfallMovement(at, {x: at.x, y: at.y, z: at.z - 3}, step);
+ assert.ok(next.y - step(next.x, next.z) >= WATERFALL_BUMPER_RADIUS - 1e-6, 'the bumper never goes into the ground step');
+ at = next;
+}
+assert.ok(at.z < -40, 'the dragon gets over a ground step taller than one move instead of freezing (z ' + at.z.toFixed(1) + ')');
+// A side wall the dragon cannot rise over (the Hollow reports its ceiling there): the forward part of the move continues.
+const wall = (x, z) => (x > 10 ? 1e6 : 0);
+at = {x: 9, y: 50, z: 0};
+for (let i = 0; i < 10; i++) at = limitWaterfallMovement(at, {x: at.x + 2, y: at.y, z: at.z - 2}, wall);
+assert.ok(at.z < -15 && at.x <= 10, 'a diagonal move into a side wall keeps its forward part (x ' + at.x.toFixed(1) + ', z ' + at.z.toFixed(1) + ')');
 
 assert.equal(normalizeThumbInput(700, 835, 100, 844), -1, 'bottom edge is maximum down');
 assert.equal(normalizeThumbInput(700, 8, 100, 844), 1, 'top edge is maximum up');

@@ -1,0 +1,25 @@
+name: Waterfall course check
+
+# Flies the real flight physics through every orb (tests/course-check.mjs) and runs the course tests on every
+# push, so an orb that cannot be reached, a hazard on the orb line or a bumper freeze shows up as a failed check.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Course tests
+        run: node tests/waterfall-course.test.mjs
+      - name: Course check (real flight physics)
+        run: node tests/course-check.mjs

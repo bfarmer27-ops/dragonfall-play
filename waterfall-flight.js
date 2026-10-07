@@ -3,7 +3,7 @@
 import {Euler, Quaternion, Vector3} from './vendor/three.module.js';
 import {damp, PHYSICS_STEP, wingCommand} from './flight.js';
 import {routeAt, ARC_RADIUS, WATERFALL_CRUISE_SPEED, getSpeedMultiplier, WATERFALL_BOOST_SECONDS, boostGainForStreak} from './waterfall-core.js';
-import {limitWaterfallMovement} from './waterfall-bumper.js?v=1';
+import {limitWaterfallMovement} from './waterfall-bumper.js?v=2';
 
 // Orb boost: 0..1 strength of the current speed burst (full for most of the burst, then a smooth fade).
 export function waterfallBoostStrength(f) {
@@ -19,9 +19,12 @@ export function applyOrbBoost(f, streak) {
   return f;
 }
 
-export const WATERFALL_TURN_RADIUS = ARC_RADIUS;
+// Left/right turn radius in metres at every speed. 240 m (was ARC_RADIUS = 360 m) so the Hollow's cues can be
+// flown with part of the stick to spare (Ryan, 2026-10-07: "the dragon needs to turn faster").
+export const WATERFALL_TURN_RADIUS = 240;
+// Climb/dive radius: unchanged from before (360 m / 1.5).
+export const WATERFALL_PITCH_RADIUS = ARC_RADIUS / 1.5;
 export const WATERFALL_RING_RADIUS = 13.5;
-export const WATERFALL_VERTICAL_RESPONSE = 1.5;
 const CAMERA_OFFSET = new Vector3(0, 6.4, 40);
 const CAMERA_TARGET = new Vector3(0, 1.5, -35);
 const LOCAL_UP = new Vector3(0, 1, 0);
@@ -68,7 +71,7 @@ export function stepWaterfallFlight(f, left, right, dt) {
     // An orb burst adds up to boostGain (25-50%) on top of the chosen speed, then fades out.
     f.boost = Math.max(0, (f.boost || 0) - step);
     f.speed = WATERFALL_CRUISE_SPEED*f.speedMultiplier*(1 + (f.boostGain || 0) * waterfallBoostStrength(f));
-    f.pitchRate = command.pitch * f.speed / WATERFALL_TURN_RADIUS * WATERFALL_VERTICAL_RESPONSE;
+    f.pitchRate = command.pitch * f.speed / WATERFALL_PITCH_RADIUS;
     f.yawRate = command.bank * f.speed / WATERFALL_TURN_RADIUS;
     // Thumbs level: the heading eases back toward the course line (-z) over a few seconds, so after the Hollow's
     // bends the islands and the gorge sit straight ahead again instead of looking turned (Ryan, 2026-10-07).

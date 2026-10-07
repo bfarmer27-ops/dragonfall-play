@@ -30,7 +30,7 @@ import {createAudio} from './audio.js';
 import {createSpeech, readFireWord, saveFireWord, STICKY_STATUSES} from './speech.js';
 import {createNoiseFire} from './noise-fire.js?v=1';
 import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, ROUTE_LENGTH, createRings as createWaterfallRings, createWaterfallObstacles, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
-import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=8';
+import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=9';
 // Emerald Falls hazard names for the HUD: a graze costs a shield, a fireball shatters (lava cannot be shattered).
 const HAZARD_NAMES={spire:'SPIRE',totem:'TOTEM',stalactite:'STALACTITE',crystal:'CRYSTAL',geyser:'LAVA GEYSER',root:'ROOT'};
 const HAZARD_SHATTER={spire:'SPIRE SHATTERED',totem:'TOTEM SHATTERED',stalactite:'STALACTITE SHATTERED',crystal:'CRYSTAL SHATTERED',root:'ROOT BURNED'};

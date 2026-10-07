@@ -81,16 +81,20 @@ export function hollowPath(d){
 // Orb cues through the Hollow: [distance, across, up] from the tunnel's centre line. Every ring sits inside
 // the clear radius so the whole ring can be flown through.
 // Each cue sits on the far side of the hazard that follows it, so the line from cue to cue stays clear.
+// 2026-10-07: from the cathedral on, the cues cut the tunnel's bends instead of adding to them, and the up/down
+// swings are smaller (the shaft cue sits above the dip), so every cue can be flown with 60% of the stick at
+// every speed (tests/course-check.mjs). The old cathedral cues needed a 160 m sideways shift in 350 m.
 export const HOLLOW_RING_CUES=Object.freeze([
- [420,0,0],[900,-34,8],[1300,32,-14],[1700,-30,18],
- [2150,70,40],[2500,-90,-60],[2850,70,30],
- [3350,-30,22],[3800,34,-8],[4150,28,20],
- [4600,-60,30],[5000,62,-34],[5350,30,12],
- [5850,0,-22],[6150,-28,18],
+ [420,0,0],[900,-34,8],[1300,32,-14],[1700,30,18],
+ [2150,25,10],[2500,-25,-10],[2850,25,8],
+ [3350,30,0],[3800,-30,0],[4150,-20,10],
+ [4600,-60,10],[5000,62,-10],[5350,30,5],
+ [5850,0,60],[6150,-20,-20],
  [6600,-22,10],[HOLLOW_EXIT,0,0],
 ].map(Object.freeze));
-// Golden orbs in the Hollow: one high in a corner of the cathedral, one low over the lava.
-export const HOLLOW_BONUS_ORBS=Object.freeze([[2650,140,100],[4000,0,-38]].map(Object.freeze));
+// Golden orbs in the Hollow: one high over the cue line in the cathedral, one low over the lava; each is off the
+// line between its two cues but close enough to reach and still make the next cue.
+export const HOLLOW_BONUS_ORBS=Object.freeze([[2650,0,25],[4000,-52,-12]].map(Object.freeze));
 // Hazards in the Hollow: a vertical cylinder at (centre + side*across). Stalactites hang from the ceiling to
 // just under the centre line, crystals rise from the lake floor to just over it, roots run floor to ceiling,
 // geysers are lava columns that are only dangerous while they are up (period/up seconds, phase offset).
@@ -100,8 +104,8 @@ export const HOLLOW_HAZARDS=Object.freeze([
  {kind:'crystal',distance:2300,side:-1,across:70,radius:20},
  {kind:'crystal',distance:2650,side:1,across:85,radius:22},
  {kind:'crystal',distance:2950,side:-1,across:60,radius:18},
- {kind:'geyser',distance:3550,side:1,across:34,radius:15,period:3.8,up:1.5,phase:0},
- {kind:'geyser',distance:3950,side:-1,across:34,radius:15,period:3.8,up:1.5,phase:1.9},
+ {kind:'geyser',distance:3550,side:-1,across:34,radius:15,period:3.8,up:1.5,phase:0},
+ {kind:'geyser',distance:3950,side:1,across:34,radius:15,period:3.8,up:1.5,phase:1.9},
  {kind:'root',distance:4500,side:1,across:40,radius:15},
  {kind:'root',distance:4900,side:-1,across:44,radius:15},
  {kind:'stalactite',distance:5050,side:1,across:22,radius:11},
@@ -170,9 +174,12 @@ export function getSpeedMultiplier(){return speedMultiplier;}
 export function setSpeedMultiplier(v){const value=Number(v);speedMultiplier=clamp(Number.isFinite(value)?value:DEFAULT_SPEED_MULTIPLIER,SPEED_MULTIPLIER_MIN,SPEED_MULTIPLIER_MAX);try{globalThis.localStorage?.setItem(SPEED_STORAGE_KEY,String(speedMultiplier));}catch{}return speedMultiplier;}
 
 // Golden bonus orbs: off the main line, worth five, never break the streak when skipped.
-// One hangs low under the second stone arch before the drop; one sits low over the lake at the end.
+// One hangs low over the river before the drop; one sits low over the lake at the end.
+// The first one was at [62,-58], beside the right river bank: the dragon's 24 m bumper touched the bank before
+// the orb, so the dragon froze in front of it (Ryan, 2026-10-07). It now sits over open water on the left, 50 m
+// clear of the bumper floor and 46 m off the line between its neighbour orbs (tests/course-check.mjs).
 export const WATERFALL_BONUS_ORBS=Object.freeze([
- Object.freeze({distance:FALL_START-140,offset:[62,-58]}),
+ Object.freeze({distance:FALL_START-140,offset:[-40,-42]}),
  Object.freeze({distance:FALL_END+700,offset:[-48,-70]}),
 ]);
 export const WATERFALL_BONUS_VALUE=5;
@@ -227,12 +234,15 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
 // gorge slalom, alternating sides, each leaving a clear line past it. Totems: three carved stone pillars on
 // mossy islands in the lower river after the fall. Every hazard starts at its river surface and rises into
 // the flight corridor; grazing one costs a shield; a fireball shatters it.
-export const WATERFALL_SPIRE_DISTANCES=Object.freeze([900,1330,1760,2240].map(d=>d+PRELUDE_LENGTH));
+// Each spire stands beside an opening orb, on the side opposite that orb (the orbs alternate -x/+x, so the
+// spires alternate +x/-x). The straight line from orb to orb then clears every spire (2026-10-07: the old
+// spires between the orbs stood on that line, so following the orbs flew into them).
+export const WATERFALL_SPIRE_DISTANCES=Object.freeze([...WATERFALL_OPENING_RING_DISTANCES,WATERFALL_APPROACH_RING_DISTANCE]);
 export const WATERFALL_TOTEM_DISTANCES=Object.freeze([319,769,1219].map(d=>d+FALL_END));
 export function createWaterfallObstacles(){
  const out=[];let index=0;
  for(const distance of WATERFALL_SPIRE_DISTANCES){
-  const p=routeAt(distance),side=index%2?1:-1,radius=18+(index%2)*3;
+  const p=routeAt(distance),side=index%2?-1:1,radius=18+(index%2)*3;
   const base=p.y-WATERFALL_RIVER_CLEARANCE,top=p.y+36+(index%2)*10;
   out.push({kind:'spire',distance,index,side,x:p.x+side*30,altitude:(base+top)/2,base,top,z:p.z,radius,thickness:top-base,hit:false});
   index++;
