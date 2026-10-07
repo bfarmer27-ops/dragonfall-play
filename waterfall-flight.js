@@ -26,6 +26,8 @@ const CAMERA_OFFSET = new Vector3(0, 6.4, 40);
 const CAMERA_TARGET = new Vector3(0, 1.5, -35);
 const LOCAL_UP = new Vector3(0, 1, 0);
 const LOCAL_FORWARD = new Vector3(0, 0, -1);
+const _euler = new Euler();
+const clampNumber = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 // Call with newFlight() so ordinary scores, health, and other shared counters survive.
 // orientation is authoritative. pitch/yaw are compatibility values, not steering state.
@@ -68,6 +70,9 @@ export function stepWaterfallFlight(f, left, right, dt) {
     f.speed = WATERFALL_CRUISE_SPEED*f.speedMultiplier*(1 + (f.boostGain || 0) * waterfallBoostStrength(f));
     f.pitchRate = command.pitch * f.speed / WATERFALL_TURN_RADIUS * WATERFALL_VERTICAL_RESPONSE;
     f.yawRate = command.bank * f.speed / WATERFALL_TURN_RADIUS;
+    // Thumbs level: the heading eases back toward the course line (-z) over a few seconds, so after the Hollow's
+    // bends the islands and the gorge sit straight ahead again instead of looking turned (Ryan, 2026-10-07).
+    if (Math.abs(command.bank) < .08) f.yawRate -= clampNumber(f.yaw, -.6, .6) * .55;
     axis.set(f.pitchRate, f.yawRate, 0);
     const rate = axis.length();
     middle.copy(f.orientation);
@@ -77,6 +82,13 @@ export function stepWaterfallFlight(f, left, right, dt) {
       fullTurn.setFromAxisAngle(axis, rate * step);
       middle.multiply(halfTurn);
       f.orientation.multiply(fullTurn).normalize();
+    }
+    // Pitch and turn are applied about the dragon's own axes, which slowly rolls the frame; rebuild the
+    // orientation from its forward direction so no roll ever builds up (the world never looks tilted).
+    forward.copy(LOCAL_FORWARD).applyQuaternion(f.orientation);
+    if (Math.abs(forward.y) < .985) {
+      f.yaw = Math.atan2(-forward.x, -forward.z);
+      f.orientation.setFromEuler(_euler.set(Math.asin(clampNumber(forward.y, -1, 1)), f.yaw, 0, 'YXZ'));
     }
     // Midpoint direction keeps turns smooth and makes path length independent of heading.
     forward.copy(LOCAL_FORWARD).applyQuaternion(middle);

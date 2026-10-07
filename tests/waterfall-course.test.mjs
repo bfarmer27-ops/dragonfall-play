@@ -107,7 +107,7 @@ for (let d = 1; d <= HOLLOW_LENGTH; d += 1) {
  if (p.inside) { deepest = Math.max(deepest, ENTRY_TOP_Y - p.y); tightest = Math.min(tightest, p.clear); assert.ok(p.r >= 100, 'the tunnel is never narrower than 100 m at ' + d); }
  lastP = p;
 }
-assert.ok(deepest > 400, 'the shaft dives well below the cruise height');
+assert.ok(deepest > 300, 'the shaft dives well below the cruise height (' + deepest.toFixed(0) + ' m)');
 assert.ok(tightest >= 48, 'the clear radius always fits the 24 m dragon with room (' + tightest.toFixed(0) + ')');
 for (const r of hollowRings) {
  const p = hollowPath(r.distance), off = Math.hypot(r.x - p.x, r.altitude - p.y);

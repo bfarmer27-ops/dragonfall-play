@@ -62,18 +62,18 @@ const sm=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
 const wave=(d,start,length,amp)=>d>start&&d<start+length?amp*Math.sin((d-start)/length*Math.PI*2):0;
 export function hollowZone(d){for(const z of HOLLOW_ZONES)if(d<z.end)return z.name;return 'open';}
 export function hollowPath(d){
- // Bends no tighter than the dragon's own turn (radius 360 m at full bank): amplitude x (2*pi/length)^2 < 1/300.
- const x=wave(d,760,1140,110)+wave(d,3100,1200,-110)+wave(d,4300,1200,100);
- const y=ENTRY_TOP_Y-120*sm(HOLLOW_MOUTH,1900,d)-40*sm(1900,3100,d)-220*sm(3100,4300,d)+150*sm(4300,5500,d)
-  -(d>5500&&d<6200?260*Math.sin((d-5500)/700*Math.PI):0)+230*sm(6200,HOLLOW_EXIT,d);
+ // Gentle bends (round 5: Ryan asked for a bigger, easier cave): amplitude x (2*pi/length)^2 < 1/550.
+ const x=wave(d,760,1140,70)+wave(d,3100,1200,-70)+wave(d,4300,1200,60);
+ const y=ENTRY_TOP_Y-90*sm(HOLLOW_MOUTH,1900,d)-30*sm(1900,3100,d)-150*sm(3100,4300,d)+100*sm(4300,5500,d)
+  -(d>5500&&d<6200?170*Math.sin((d-5500)/700*Math.PI):0)+170*sm(6200,HOLLOW_EXIT,d);
  let r;
- if(d<640)r=130+160*sm(640,HOLLOW_MOUTH,d);
- else if(d<1900)r=130-25*sm(640,1200,d);
- else if(d<3100)r=105+195*sm(1900,2150,d)-195*sm(2850,3100,d);
- else if(d<4300)r=105+10*sm(3100,3400,d)-10*sm(4000,4300,d);
- else if(d<5500)r=105+55*sm(4300,4500,d)-45*sm(5300,5500,d);
- else if(d<6200)r=115;
- else r=115+25*sm(6200,6600,d)+150*sm(6700,HOLLOW_EXIT,d);
+ if(d<640)r=170+120*sm(640,HOLLOW_MOUTH,d);
+ else if(d<1900)r=170-30*sm(640,1200,d);
+ else if(d<3100)r=140+200*sm(1900,2150,d)-200*sm(2850,3100,d);
+ else if(d<4300)r=140+15*sm(3100,3400,d)-15*sm(4000,4300,d);
+ else if(d<5500)r=140+60*sm(4300,4500,d)-45*sm(5300,5500,d);
+ else if(d<6200)r=155;
+ else r=155+25*sm(6200,6600,d)+110*sm(6700,HOLLOW_EXIT,d);
  const floor=y-r*.78;
  const inside=d>=HOLLOW_MOUTH&&d<=HOLLOW_EXIT;
  return {x,y,z:-d,r,floor,clear:inside?Math.max(20,r*.86-30):Infinity,zone:hollowZone(d),inside};
@@ -216,7 +216,9 @@ export function createRings(selectedSpeed=getSpeedMultiplier()){
   const base=placement.hollow?hollowPath(distance):p;
   const [offsetX,offsetY]=placement.offset||[0,0],x=base.x+offsetX,y=base.y+offsetY,center={x,y,z};
   const bonus=!!placement.bonus;
-  out.push({distance,x,altitude:y,z,center,normal,radius:bonus?WATERFALL_RING_RADIUS*.75:WATERFALL_RING_RADIUS,pitch:p.pitch,fall:p.fall,caught:false,forced:placement.forced,bonus,hollow:!!placement.hollow,value:bonus?WATERFALL_BONUS_VALUE:1});
+  // Hollow cues are bigger targets (the cave is dark and fast).
+  const radius=bonus?WATERFALL_RING_RADIUS*.75:placement.hollow?WATERFALL_RING_RADIUS*1.35:WATERFALL_RING_RADIUS;
+  out.push({distance,x,altitude:y,z,center,normal,radius,pitch:p.pitch,fall:p.fall,caught:false,forced:placement.forced,bonus,hollow:!!placement.hollow,value:bonus?WATERFALL_BONUS_VALUE:1});
  }
  return out;
 }

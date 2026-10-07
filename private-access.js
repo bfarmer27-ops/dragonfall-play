@@ -7,7 +7,7 @@ const pageScript = (() => {
   const path = location.pathname;
   if (path.includes('/close-flight/')) return './scenic.js?v=4';
   if (path.endsWith('/scenic.html')) return './scenic.js';
-  return './game.js?v=28';
+  return './game.js?v=29';
 })();
 
 function addStyles() {

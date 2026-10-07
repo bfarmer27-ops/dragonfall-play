@@ -16,5 +16,11 @@ shrunk with Blender): "Flying Islands Free Set" by LapaModels (fab_island_1-3, l
 "Game ready grass" by Charlie catling (fab_grass, listing ce4a3934-00e7-4343-8553-8667d4c4bd1c);
 "free environment props set" by Z-TR-ZTR (fab_prop_0/2/4/6/8, listing 159ef019-27e6-4b01-be4e-fad4132cb3c3).
 Credit line: Models by LapaModels, Nicholas 3D, Stompy Circles, Charlie catling and Z-TR-ZTR via Fab, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
-The Hollow (2026-10-07, hollow.js) is drawn in code with the same Poly Haven textures: tunnel, crystals, lava, embers, roots, fungus, wind rivers, mountain face and ledge. No new outside files.
+The Hollow (2026-10-07, hollow.js) is drawn in code: tunnel, lava, embers, roots, fungus, wind rivers, mountain face and ledge.
+Round 5 (2026-10-07) textures, all Poly Haven CC0, the most-downloaded sets in their class: rock_face_03 (gorge walls, 2k/1k), lichen_rock (second wall set, 2k),
+rock_06 (cave walls, 2k/1k), brown_mud_leaves_01 (forest shelves, 2k), aerial_rocks_04 (scree, 2k). https://polyhaven.com/textures
+Round 5 crystal models in assets/waterfall/models/fab (Fab, downloaded 2026-10-07, shrunk with Blender): "Stylized Crystal Cluster" (crystal_cluster, listing
+f1c0d0e0-d64f-4236-af36-b3ab9d74875f, Fab Standard License); "Magic Crystal (game ready)" (crystal_magic, listing 300c55d9-c2ae-4b98-bc11-0420cff0caa3, CC BY 4.0);
+"Game ready low poly crystal" (crystal_lowpoly, listing 93493bce-c625-4df2-81d9-dcd449c2435f, CC BY 4.0); "Beach Quartz Photoscan 2k" (quartz_scan, listing
+1d2ed2d0-3865-482a-9c96-8b668445b535, CC BY 4.0). Cave floor rubble reuses the lowpoly Realistic Rocks Pack above.
 License: https://polyhaven.com/license ; asset hashes and texture usage: docs/WATERFALL-ASSETS.md in the source repository.

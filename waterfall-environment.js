@@ -12,7 +12,7 @@ import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
 import {createSky, setFogConstants, fogUniforms} from './sky.js';
 import {TIER} from './quality.js';
 import {routeAt, FALL_START, FALL_END, ARC_RADIUS, ROUTE_LENGTH, PRELUDE_LENGTH, HOLLOW_LENGTH, HOLLOW_MOUTH, HOLLOW_EXIT, WATERFALL_RIVER_CLEARANCE, ENTRY_TOP_Y} from './waterfall-core.js';
-import {createHollow} from './hollow.js?v=1';
+import {createHollow} from './hollow.js?v=2';
 
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -322,15 +322,19 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = Math.min(high ? 8 : 4, renderer.capabilities.getMaxAnisotropy());
   if (color) t.colorSpace = THREE.SRGBColorSpace; textures.push(t); return t;
  };
+ // Round 5 (2026-10-07): the most-downloaded Poly Haven sets replace the striped cliff texture. Walls: rock_face_03
+ // (183k downloads) with lichen_rock as the second set; ground: aerial_grass_rock (365k) with brown_mud_leaves_01
+ // (523k, the most-downloaded ground on the site) on the forest shelves and aerial_rocks_04 (223k) as scree.
  const cliffSize = high ? '2k' : '1k';
  const maps = {
-  cliffColor: {value: tex(`cliff_side_diff_${cliffSize}.jpg`, true)}, cliffNormal: {value: tex(`cliff_side_nor_gl_${cliffSize}.jpg`)}, cliffArm: {value: tex(`cliff_side_arm_${cliffSize}.jpg`)},
+  cliffColor: {value: tex(`waterfall/rock_face_03_diff_${cliffSize}.jpg`, true)}, cliffNormal: {value: tex(`waterfall/rock_face_03_nor_gl_${cliffSize}.jpg`)}, cliffArm: {value: tex(`waterfall/rock_face_03_arm_${cliffSize}.jpg`)},
   groundColor: {value: tex('waterfall/aerial_grass_rock_diff_2k.jpg', true)}, groundNormal: {value: tex('waterfall/aerial_grass_rock_nor_gl_2k.jpg')}, groundArm: {value: tex('waterfall/aerial_grass_rock_arm_2k.jpg')},
+  caveColor: {value: tex(`waterfall/rock_06_diff_${cliffSize}.jpg`, true)}, caveNormal: {value: tex(`waterfall/rock_06_nor_gl_${cliffSize}.jpg`)},
  };
  if (high) {
-  maps.rock2Color = {value: tex('waterfall/rock_face_03_diff_1k.jpg', true)}; maps.rock2Normal = {value: tex('waterfall/rock_face_03_nor_gl_1k.jpg')};
-  maps.screeColor = {value: tex('waterfall/rocky_terrain_02_diff_1k.jpg', true)}; maps.screeNormal = {value: tex('waterfall/rocky_terrain_02_nor_gl_1k.jpg')};
-  maps.floorColor = {value: tex('waterfall/forest_floor_diff_1k.jpg', true)};
+  maps.rock2Color = {value: tex('waterfall/lichen_rock_diff_2k.jpg', true)}; maps.rock2Normal = {value: tex('waterfall/lichen_rock_nor_gl_2k.jpg')};
+  maps.screeColor = {value: tex('waterfall/aerial_rocks_04_diff_2k.jpg', true)}; maps.screeNormal = {value: tex('waterfall/aerial_rocks_04_nor_gl_2k.jpg')};
+  maps.floorColor = {value: tex('waterfall/brown_mud_leaves_01_diff_2k.jpg', true)};
  }
  const terrainMaterial = createTerrainMaterial(maps, high); materials.push(terrainMaterial);
  function mesh(geo, mat, name, parent = group) { geometries.push(geo); const m = new THREE.Mesh(geo, mat); m.name = name; parent.add(m); return m; }
@@ -447,7 +451,8 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
     uniform float uTime;uniform sampler2D uWaterNormal;uniform sampler2D uNoise;uniform float uWaveStrength;
     uniform vec3 uDeep;uniform vec3 uShallow;uniform vec3 uFoam;uniform float uLipZ;uniform float uCurtainZ;
     uniform sampler2D uReflection;uniform mat4 uReflMatrix;uniform float uReflMix;uniform float uReflDistort;
-    vec3 waterNormalAt(vec2 uv,float mask){vec3 a=texture2D(uWaterNormal,uv).xyz*2.-1.;vec3 b=texture2D(uWaterNormal,uv.yx*1.37+vec2(.31,.77)).xyz*2.-1.;return mix(a,b,mask);}`)
+    // Three taps of the ripple map (turned, rescaled, shifted) blended by two slow masks: no repeat pattern survives.
+    vec3 waterNormalAt(vec2 uv,float mask,float mask2){vec3 a=texture2D(uWaterNormal,uv).xyz*2.-1.;vec3 b=texture2D(uWaterNormal,uv.yx*1.37+vec2(.31,.77)).xyz*2.-1.;vec3 c=texture2D(uWaterNormal,vec2(uv.x*.62-uv.y*.47,uv.x*.47+uv.y*.62)*.83+vec2(.57,.13)).xyz*2.-1.;return mix(mix(a,b,mask),c,mask2);}`)
    .replace('#include <map_fragment>', `
     float rapids=smoothstep(260.,0.,riverWorld.z-uLipZ)*step(uCurtainZ-1.,riverWorld.z);
     float flow=vFlow*.05-uTime*(.9+rapids*2.5);
@@ -467,8 +472,9 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
    `)
    .replace('#include <normal_fragment_maps>', `
     float tapMask=smoothstep(.3,.7,texture2D(uNoise,riverWorld.xz*.004+vec2(.2,.6)).r);
-    vec3 n1=waterNormalAt(vec2(riverWorld.x*.025,flow*.5),tapMask);
-    vec3 n2=waterNormalAt(vec2(riverWorld.x*.07+.3,flow*1.3),tapMask);
+    float tapMask2=smoothstep(.35,.65,texture2D(uNoise,riverWorld.xz*.0023+vec2(.7,.1)).r);
+    vec3 n1=waterNormalAt(vec2(riverWorld.x*.025,flow*.5),tapMask,tapMask2);
+    vec3 n2=waterNormalAt(vec2(riverWorld.x*.07+.3,flow*1.3),tapMask,tapMask2);
     vec3 nw=normalize(vec3((n1.xy+n2.xy)*uWaveStrength*(1.+rapids*1.2)*(1.-foam*.5),n1.z*n2.z));
     vec3 gN=normalize(riverNormal);vec3 tX=vec3(1.,0.,0.);vec3 tZ=normalize(cross(tX,gN));tX=cross(gN,tZ);
     vec3 worldN=normalize(tX*nw.x+tZ*nw.y+gN*nw.z);
@@ -915,6 +921,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   loadVariants(['mountainside']).then(v => instanceSpots(v, mountainSpots, 'scanned-mountains', {tintJitter: .2, cull: false})),
   loadVariants(['fern_02']).then(v => instanceSpots(v, fernSpots, 'scanned-ferns', {tintJitter: .35})),
   loadVariants(['dead_tree_trunk_02']).then(v => instanceSpots(v, trunkSpots, 'scanned-trunks', {tintJitter: .25})),
+  hollow.placeModels({loadVariants}),   // real crystal models and scanned rubble inside the Hollow
  ]);
 
  // --- Temple ruins on the big island, wisps, birds ----------------------------------------------------------
@@ -1149,12 +1156,12 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   const vz = flight ? flight.z : 0;
   insideNow = hollow.insideFactor(vz);
   if (sky) {
-   sky.sunLight.intensity = 3.2 * (1 - .96 * insideNow);
-   sky.hemiLight.intensity = lerp(1.0, .45, insideNow);
+   sky.sunLight.intensity = 3.2 * (1 - .9 * insideNow);
+   sky.hemiLight.intensity = lerp(1.0, .75, insideNow);
    sky.hemiLight.color.copy(hemiOut).lerp(hemiIn, insideNow); sky.hemiLight.groundColor.copy(groundOut).lerp(groundIn, insideNow);
   }
   fogUniforms.fogColor.value.copy(fogOut).lerp(fogIn, insideNow);
-  fogUniforms.fogDensity.value = lerp(.00066, .0022, insideNow);
+  fogUniforms.fogDensity.value = lerp(.00066, .0015, insideNow);
   // Draw only the pieces of the world near the dragon (the fog has already swallowed the rest).
   const detailAhead = insideNow > .5 ? 1100 : (high ? 1800 : 1250), terrainAhead = insideNow > .5 ? 1400 : 3200;
   for (const c of chunks) {

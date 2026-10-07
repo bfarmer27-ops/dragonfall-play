@@ -16,7 +16,7 @@ export const HOLLOW_PIECE_RINGS = 50; // rings per drawn piece (400 m)
 
 const caveGLSL = `
  varying vec3 cPosition; varying vec3 cNormal;
- uniform sampler2D cliffColor, cliffNormal, cliffArm;
+ uniform sampler2D cliffColor, cliffNormal, cliffArm, caveColor, caveNormal;
  #ifdef RICH_ROCK
  uniform sampler2D rock2Color, rock2Normal;
  #endif
@@ -118,18 +118,19 @@ export function createHollow(ctx) {
     .replace('#include <map_fragment>', `
      vec3 gn=normalize(cNormal);vec3 tw=cWeights(gn);
      float tapMask=smoothstep(.3,.7,cNoise(cPosition.xz*.011+cPosition.y*.003));
+     // Cave rock (rock_06, no stripes) sampled three ways and blended by a slow mask; lichen rock by region on high.
+     vec3 stone=mix(cSample(caveColor,cPosition/15.,tw),cSample(caveColor,cAlt(cPosition)/15.,tw),tapMask);
+     float tapMask2=smoothstep(.35,.65,cNoise(cPosition.xz*.0047+cPosition.y*.0051+9.));
+     stone=mix(stone,cSample(caveColor,vec3(cPosition.y,cPosition.z,cPosition.x)*.77/15.+vec3(5.,23.,41.),tw),tapMask2);
      #ifdef RICH_ROCK
-      vec3 stone=mix(cSample(rock2Color,cPosition/14.,tw),cSample(rock2Color,cAlt(cPosition)/14.,tw),tapMask);
       float region=smoothstep(.4,.6,cNoise(cPosition.xz*.003+cPosition.y*.002+5.3));
-      stone=mix(stone,mix(cSample(cliffColor,cPosition/18.,tw),cSample(cliffColor,cAlt(cPosition)/18.,tw),tapMask),region*.7);
-     #else
-      vec3 stone=mix(cSample(cliffColor,cPosition/16.,tw),cSample(cliffColor,cAlt(cPosition)/16.,tw),tapMask);
+      stone=mix(stone,mix(cSample(rock2Color,cPosition/17.,tw),cSample(rock2Color,cAlt(cPosition)/17.,tw),tapMask),region*.6);
      #endif
-     vec3 fine=cSample(cliffColor,cPosition/3.2,tw);stone*=mix(vec3(1.),fine*1.9,.35);
-     vec3 broad=cSample(cliffColor,cPosition/47.,tw);stone=mix(stone,stone*broad*2.,.4);
-     float macro=.45+.55*cNoise(cPosition.xz*.004+cPosition.y*.004+3.);
+     vec3 fine=cSample(caveColor,cPosition/3.4,tw);stone*=mix(vec3(1.),fine*1.9,.3);
+     vec3 broad=cSample(caveColor,cPosition/52.,tw);stone=mix(stone,stone*broad*2.,.35);
+     float macro=.55+.45*cNoise(cPosition.xz*.004+cPosition.y*.004+3.);
      float wet=smoothstep(.6,.25,cNoise(cPosition.xz*.02+cPosition.y*.05+1.));
-     vec3 tint=mix(vec3(.46,.43,.4),vec3(.26,.3,.34),wet)*macro;
+     vec3 tint=mix(vec3(.62,.58,.54),vec3(.36,.4,.44),wet)*macro;
      float greenish=clamp((vCaveLight.g-max(vCaveLight.r,vCaveLight.b))*3.,0.,1.);
      float mossy=smoothstep(.45,.8,cNoise(cPosition.xz*.04+cPosition.y*.03+2.))*greenish;
      tint=mix(tint,vec3(.3,.5,.2),mossy);
@@ -137,10 +138,9 @@ export function createHollow(ctx) {
     `)
     .replace('#include <roughnessmap_fragment>', 'float roughnessFactor=mix(.95,.45,wet);')
     .replace('#include <normal_fragment_maps>', `
+     vec3 wn=mix(cNormalTri(caveNormal,cPosition/15.,tw,gn),cNormalTri(caveNormal,cAlt(cPosition)/15.,tw,gn),tapMask);
      #ifdef RICH_ROCK
-      vec3 wn=mix(cNormalTri(rock2Normal,cPosition/14.,tw,gn),cNormalTri(rock2Normal,cAlt(cPosition)/14.,tw,gn),tapMask);
-     #else
-      vec3 wn=mix(cNormalTri(cliffNormal,cPosition/16.,tw,gn),cNormalTri(cliffNormal,cAlt(cPosition)/16.,tw,gn),tapMask);
+      wn=normalize(mix(wn,mix(cNormalTri(rock2Normal,cPosition/17.,tw,gn),cNormalTri(rock2Normal,cAlt(cPosition)/17.,tw,gn),tapMask),region*.6));
      #endif
      normal=normalize((viewMatrix*vec4(normalize(wn),0.)).xyz);
     `)
@@ -218,11 +218,11 @@ export function createHollow(ctx) {
    addSource(w.x + nx / nl * size * .6, w.y + ny / nl * size * .6, w.z, hex, 70 + size * 7, .4 + size * .035);
   }
  }
- placeCrystals('throat', high ? 30 : 15, 700, 1860, 301);
- placeCrystals('cathedral', high ? 64 : 32, 1950, 3060, 311);
- placeCrystals('vault', high ? 12 : 6, 3160, 4240, 321);
- placeCrystals('shaft', high ? 26 : 13, 5540, 6180, 331);
- placeCrystals('gate', high ? 16 : 8, 6240, 6820, 341);
+ placeCrystals('throat', high ? 44 : 22, 700, 1860, 301);
+ placeCrystals('cathedral', high ? 76 : 38, 1950, 3060, 311);
+ placeCrystals('vault', high ? 14 : 7, 3160, 4240, 321);
+ placeCrystals('shaft', high ? 34 : 17, 5540, 6180, 331);
+ placeCrystals('gate', high ? 20 : 10, 6240, 6820, 341);
  const fungi = [];
  for (let i = 0; i < (high ? 72 : 36); i++) {
   const d = 4340 + hash(i, 351) * 1110, a = (hash(i, 352) < .5 ? 0 : Math.PI) + (hash(i, 353) - .5) * 1.1, w = wallPoint(d, a);
@@ -244,8 +244,15 @@ export function createHollow(ctx) {
   addSource(x, p.floor + h * .5, -d, hex, 340, 1.3);
  }
  for (const [d, across, up] of HOLLOW_RING_CUES) { const p = hollowPath(d); addSource(p.x + across, p.y + up, -d, 0x5cff9a, 80, .45); }
- for (let d = HOLLOW_MOUTH; d <= HOLLOW_EXIT; d += 120) { const p = hollowPath(d); addSource(p.x, p.y, -d, 0x4a6a7a, p.r * 2.2, .09); }
- for (let d = 1950; d <= 3050; d += 150) { const p = hollowPath(d); addSource(p.x, p.y, -d, 0x6a4a9a, 460, .16); }
+ for (let d = HOLLOW_MOUTH; d <= HOLLOW_EXIT; d += 120) { const p = hollowPath(d); addSource(p.x, p.y, -d, 0x5a7c8c, p.r * 2.6, .22); }
+ for (let d = 1950; d <= 3050; d += 150) { const p = hollowPath(d); addSource(p.x, p.y, -d, 0x7a5aaa, 520, .3); }
+ // Path lights: a chain of small glows along the line from cue to cue, so the way through is always visible.
+ const pathLights = [];
+ {
+  const cuePts = HOLLOW_RING_CUES.map(([d, across, up]) => { const p = hollowPath(d); return new THREE.Vector3(p.x + across, p.y + up, -d); });
+  const curve = new THREE.CatmullRomCurve3(cuePts, false, 'catmullrom', .5), len = curve.getLength(), n = Math.floor(len / 26);
+  for (let i = 1; i < n; i++) { const p = curve.getPointAt(i / n); pathLights.push({x: p.x, y: p.y, z: p.z, t: i / n}); }
+ }
 
  // --- Tunnel pieces with baked light ------------------------------------------------------------------------
  const tubeNormal = whole.attributes.normal;
@@ -589,6 +596,33 @@ export function createHollow(ctx) {
   return best;
  }
 
+ // --- Path lights: small glows pulsing forward along the cue line -------------------------------------------------
+ {
+  const pathMat = new THREE.ShaderMaterial({transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: true,
+   uniforms: {...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), uTime: {value: 0}, uMap: {value: glowTex}, uScale: {value: 700}},
+   vertexShader: `attribute float aT;uniform float uTime;uniform float uScale;varying float vPulse;
+    #include <fog_pars_vertex>
+    void main(){vec4 mvPosition=modelViewMatrix*vec4(position,1.);gl_Position=projectionMatrix*mvPosition;
+     vPulse=.45+.55*pow(.5+.5*sin(aT*260.-uTime*5.),3.);gl_PointSize=(2.6+2.2*vPulse)*uScale/max(1.,-mvPosition.z);
+    #include <fog_vertex>
+    }`,
+   fragmentShader: `uniform sampler2D uMap;varying float vPulse;
+    #include <fog_pars_fragment>
+    void main(){vec4 t=texture2D(uMap,gl_PointCoord);gl_FragColor=vec4(vec3(.7,1.,.85)*(.9+.9*vPulse),t.a*.62);
+    #include <fog_fragment>
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    }`});
+  materials.push(pathMat); animated.push(pathMat.uniforms.uTime);
+  for (let k = 0; k < pieceCount; k++) {
+   const zNear = -ringD[k * HOLLOW_PIECE_RINGS], zFar = -ringD[Math.min(R - 1, (k + 1) * HOLLOW_PIECE_RINGS)];
+   const list = pathLights.filter(p => p.z <= zNear && p.z > zFar); if (!list.length) continue;
+   const pos = [], t = []; for (const p of list) { pos.push(p.x, p.y, p.z); t.push(p.t); }
+   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('aT', new THREE.Float32BufferAttribute(t, 1)); geometries.push(geo);
+   const pts = new THREE.Points(geo, pathMat); pts.name = 'hollow-path-lights-' + k; geo.computeBoundingSphere(); group.add(pts); register(pts, zNear, zFar, 'detail');
+  }
+ }
+
  // --- Glow motes drifting through the tunnel ----------------------------------------------------------------------
  const moteMat = new THREE.ShaderMaterial({transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: true,
   uniforms: {...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), uTime: {value: 0}, uMap: {value: glowTex}, uScale: {value: 700}},
@@ -697,9 +731,10 @@ export function createHollow(ctx) {
  const crystalHazardGeo = (() => { const body = new THREE.CylinderGeometry(1.2, 2, .86, 6), tp = new THREE.ConeGeometry(1.2, .14, 6); body.translate(0, -.07, 0); tp.translate(0, .43, 0); const g = mergeGeometries([body, tp], false); body.dispose(); tp.dispose(); geometries.push(g); return g; })();
  const geyserGeo = new THREE.CylinderGeometry(1.1, .7, 1, 14, 1, true); geometries.push(geyserGeo);
  const rootHazardGeo = (() => { const list = []; for (let k = 0; k < 3; k++) { const pts = []; for (let i = 0; i <= 4; i++) { const t = i / 4, a = k * 2.1 + t * 4; pts.push(new THREE.Vector3(Math.cos(a) * .5, t - .5, Math.sin(a) * .5)); } list.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, .62, 7, false)); } const g = mergeGeometries(list, false); for (const l of list) l.dispose(); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 6, uv.getY(i) * 2); geometries.push(g); return g; })();
+ const crystalHazardMeshes = [];
  function hazardMesh(hazard) {
   let m;
-  if (hazard.kind === 'crystal') { m = new THREE.Mesh(crystalHazardGeo, crystalMat.clone()); m.material.color.setHex(0xe8d2ff); m.material.emissive.setHex(0xb48cff); m.material.emissiveIntensity = 1.1; materials.push(m.material); }
+  if (hazard.kind === 'crystal') { m = new THREE.Mesh(crystalHazardGeo, crystalMat.clone()); m.material.color.setHex(0xe8d2ff); m.material.emissive.setHex(0xb48cff); m.material.emissiveIntensity = 1.1; materials.push(m.material); crystalHazardMeshes.push(m); }
   else if (hazard.kind === 'geyser') { m = new THREE.Mesh(geyserGeo, geyserMat); geysers.push({mesh: m, hazard}); }
   else {
    const geo = (hazard.kind === 'root' ? rootHazardGeo : stalactiteHazardGeo).clone(); geometries.push(geo);
@@ -735,6 +770,82 @@ export function createHollow(ctx) {
   return Math.hypot(pos.x - p.x, pos.y - p.y) > p.r * .9 || pos.y < p.floor + 2;
  }
 
+ // --- Real models (Fab, loaded by the environment's loaders when they exist) ----------------------------------------
+ // Crystal models replace the drawn prisms cluster for cluster; scanned rocks become rubble along the tunnel floor.
+ const drawnCrystalMeshes = [];
+ group.traverse(o => { if (/^hollow-crystals-/.test(o.name)) drawnCrystalMeshes.push(o); });
+ function placeModels({loadVariants}) {
+  const crystals = loadVariants(['fab/crystal_cluster', 'fab/crystal_magic', 'fab/crystal_lowpoly']).then(variants => {
+   if (!variants.length) return;
+   const mats = variants.map((v, i) => {
+    const m = glowMaterial(0xffffff, 'crystal-model-' + i, .8);
+    if (v.material.map) { m.map = v.material.map; m.emissiveIntensity = .55; m.roughness = Math.min(.4, v.material.roughness ?? .4); }
+    return m;
+   });
+   // The crystal hazard pillars take the cluster model too (scaled to the unit box game.js expects).
+   {
+    const v = variants.find(x => /cluster/.test(x.name)) || variants[0];
+    const g = v.geometry.clone(); g.computeBoundingBox(); const b = g.boundingBox, h = b.max.y - b.min.y, w = Math.max(b.max.x - b.min.x, b.max.z - b.min.z);
+    g.translate(-(b.max.x + b.min.x) / 2, -b.min.y, -(b.max.z + b.min.z) / 2); g.scale(4 / w, 1 / h, 4 / w); g.translate(0, -.5, 0); geometries.push(g);
+    const hm = glowMaterial(0xe8d2ff, 'crystal-hazard-model', .8); if (v.material.map) hm.map = v.material.map; hm.emissive.setHex(0xb48cff); hm.emissiveIntensity = .9;
+    for (const m of crystalHazardMeshes) { m.geometry = g; m.material = hm; }
+   }
+   const perPiece = Array.from({length: pieceCount}, () => variants.map(() => []));
+   const pick = seed => Math.floor(hash(seed, 471) * variants.length);
+   for (const c of crystalClusters) {
+    const piece = pieceOf(Math.round((c.d - HOLLOW_MOUTH) / HOLLOW_STEP)), vi = pick(c.seed), v = variants[vi];
+    axis.set(c.nx, c.ny, 0).normalize(); qAlign.setFromUnitVectors(up, axis);
+    euler.set((hash(c.seed, 472) - .5) * .5, hash(c.seed, 473) * 6.3, (hash(c.seed, 474) - .5) * .5); qTilt.setFromEuler(euler);
+    const k = c.size * 2.3 / v.span;
+    dummy.position.set(c.x - c.nx * 2, c.y - c.ny * 2, c.z); dummy.quaternion.copy(qAlign).multiply(qTilt); dummy.scale.set(k, k, k); dummy.updateMatrix();
+    const col = new THREE.Color(c.hex), t = .8 + hash(c.seed, 475) * .4;
+    perPiece[piece][vi].push({matrix: dummy.matrix.clone(), color: new THREE.Color(col.r * t, col.g * t, col.b * t)});
+   }
+   for (const g of giants) {
+    const piece = pieceOf(Math.round((g.d - HOLLOW_MOUTH) / HOLLOW_STEP)), vi = pick(g.seed), v = variants[vi];
+    euler.set((hash(g.seed, 476) - .5) * .15, hash(g.seed, 477) * 6.3, (hash(g.seed, 478) - .5) * .15); qTilt.setFromEuler(euler);
+    const k = g.h * 1.15 / v.span;
+    dummy.position.set(g.x, g.y, g.z); dummy.quaternion.copy(qTilt); dummy.scale.set(k, k, k); dummy.updateMatrix();
+    perPiece[piece][vi].push({matrix: dummy.matrix.clone(), color: new THREE.Color(g.hex)});
+   }
+   for (const m of drawnCrystalMeshes) group.remove(m);
+   perPiece.forEach((byVariant, k) => {
+    const zNear = -ringD[k * HOLLOW_PIECE_RINGS], zFar = -ringD[Math.min(R - 1, (k + 1) * HOLLOW_PIECE_RINGS)];
+    byVariant.forEach((list, vi) => {
+     if (!list.length) return;
+     const im = new THREE.InstancedMesh(variants[vi].geometry, mats[vi], list.length);
+     list.forEach((it, i) => { im.setMatrixAt(i, it.matrix); im.setColorAt(i, it.color); });
+     im.name = 'hollow-crystal-models-' + k + '-' + vi; im.computeBoundingSphere(); group.add(im); register(im, zNear, zFar, 'detail');
+    });
+   });
+   counts.crystalModels = variants.length;
+  });
+  const rubble = loadVariants(['fab/fab_rocks', 'fab/quartz_scan']).then(variants => {
+   if (!variants.length) return;
+   const mats = variants.map((v, i) => { const m = v.material.clone(); m.roughness = .95; return caveLit(m, 'rubble-' + i); });
+   const perPiece = Array.from({length: pieceCount}, () => variants.map(() => []));
+   for (let i = 0; i < (high ? 420 : 180); i++) {
+    const d = HOLLOW_MOUTH + 60 + hash(i, 481) * (HOLLOW_EXIT - HOLLOW_MOUTH - 120), zone = zoneOf(d);
+    if (zone === 'cathedral' || zone === 'vault') continue;   // the lake and the lava own those floors
+    const w = wallPoint(d, -Math.PI * (.22 + hash(i, 482) * .56)), size = 4 + Math.pow(hash(i, 483), 2) * 22, vi = Math.floor(hash(i, 484) * variants.length), v = variants[vi];
+    const k = size / v.span, l = lightAt(w.x, w.y + size * .4, w.z);
+    dummy.position.set(w.x, w.y - size * .12, w.z); dummy.rotation.set((hash(i, 485) - .5) * .4, hash(i, 486) * 6.3, (hash(i, 487) - .5) * .4); dummy.scale.set(k, k * (.8 + hash(i, 488) * .4), k); dummy.updateMatrix();
+    perPiece[pieceOf(Math.round((d - HOLLOW_MOUTH) / HOLLOW_STEP))][vi].push({matrix: dummy.matrix.clone(), color: new THREE.Color(l[0], l[1], l[2])});
+   }
+   perPiece.forEach((byVariant, k) => {
+    const zNear = -ringD[k * HOLLOW_PIECE_RINGS], zFar = -ringD[Math.min(R - 1, (k + 1) * HOLLOW_PIECE_RINGS)];
+    byVariant.forEach((list, vi) => {
+     if (!list.length) return;
+     const im = new THREE.InstancedMesh(variants[vi].geometry, mats[vi], list.length);
+     list.forEach((it, i) => { im.setMatrixAt(i, it.matrix); im.setColorAt(i, it.color); });
+     im.name = 'hollow-rubble-' + k + '-' + vi; im.computeBoundingSphere(); group.add(im); register(im, zNear, zFar, 'detail');
+     counts.rubble = (counts.rubble || 0) + list.length;
+    });
+   });
+  });
+  return Promise.all([crystals, rubble]);
+ }
+
  function update(time) {
   caveUniforms.uFlicker.value = .82 + .18 * Math.sin(time * 7.3) * Math.sin(time * 3.1 + 1) + .08 * Math.sin(time * 13.7);
   for (const g of geysers) {
@@ -745,5 +856,5 @@ export function createHollow(ctx) {
    g.mesh.scale.y = h.thickness * rise; g.mesh.position.y = h.base + h.thickness * rise / 2;
   }
  }
- return {caveLimit, floorAt, inRock, windAt, insideFactor, lightAt, hazardMesh, update, spots, counts, lakeY};
+ return {caveLimit, floorAt, inRock, windAt, insideFactor, lightAt, hazardMesh, placeModels, update, spots, counts, lakeY};
 }
