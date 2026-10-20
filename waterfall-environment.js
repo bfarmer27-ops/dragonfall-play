@@ -1096,8 +1096,12 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   let frozen = 0;
   const freeze = o => {
    if (moving.has(o)) return;
-   if (holdsMoving.has(o)) { for (const c of o.children) freeze(c); return; }
-   o.matrixAutoUpdate = false; o.matrixWorldAutoUpdate = false; frozen++;
+   if (!holdsMoving.has(o)) {
+    o.matrixAutoUpdate = false; o.matrixWorldAutoUpdate = false; frozen++;
+   }
+   // Three still visits children of a frozen parent. Freeze every stationary
+   // descendant too, while leaving moving branches and their children live.
+   for (const c of o.children) freeze(c);
   };
   for (const c of group.children) freeze(c);
   group.userData.frozenScenery = frozen;
@@ -1131,6 +1135,7 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
  const mirrorCamera = new THREE.PerspectiveCamera();
  const _plane = new THREE.Plane(), _normal = new THREE.Vector3(0, 1, 0), _view = new THREE.Vector3(), _target = new THREE.Vector3(), _camPos = new THREE.Vector3(), _q = new THREE.Vector4(), _clip = new THREE.Vector4(), _rot = new THREE.Matrix4(), _look = new THREE.Vector3(), _point = new THREE.Vector3();
  const _texMatrix = new THREE.Matrix4();
+ const riverVisibility = [];
  function renderReflection(camera, waterY) {
   if (!useReflection) return;
   _point.set(0, waterY, 0);
@@ -1158,14 +1163,23 @@ export function createWaterfallEnvironment({group, renderer, scene = null, onThu
   _q.z = -1; _q.w = (1 + pm.elements[10]) / pm.elements[14];
   _clip.multiplyScalar(2 / _clip.dot(_q));
   pm.elements[2] = _clip.x; pm.elements[6] = _clip.y; pm.elements[10] = _clip.z + 1 - .0005; pm.elements[14] = _clip.w;
-  for (const m of riverMeshes) m.visible = false;
+  for (let i = 0; i < riverMeshes.length; i++) {
+   riverVisibility[i] = riverMeshes[i].visible;
+   riverMeshes[i].visible = false;
+  }
+  const foamVisible = foam.visible;
   foam.visible = false;
   const target = renderer.getRenderTarget(), xr = renderer.xr.enabled, shadows = renderer.shadowMap.autoUpdate;
-  renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = false;
-  renderer.setRenderTarget(reflectTarget); renderer.clear(); renderer.render(scene, mirrorCamera);
-  renderer.setRenderTarget(target); renderer.xr.enabled = xr; renderer.shadowMap.autoUpdate = shadows;
-  for (const m of riverMeshes) m.visible = true;
-  foam.visible = true;
+  try {
+   renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = false;
+   renderer.setRenderTarget(reflectTarget); renderer.clear(); renderer.render(scene, mirrorCamera);
+  } finally {
+   renderer.setRenderTarget(target); renderer.xr.enabled = xr; renderer.shadowMap.autoUpdate = shadows;
+   // Keep the distance-culling decision. A mirror pass must not turn the
+   // entire upper and lower river back on for the main camera.
+   for (let i = 0; i < riverMeshes.length; i++) riverMeshes[i].visible = riverVisibility[i];
+   foam.visible = foamVisible;
+  }
  }
 
  const _v = new THREE.Vector3();

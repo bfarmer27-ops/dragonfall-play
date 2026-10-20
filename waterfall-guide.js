@@ -14,7 +14,9 @@ export function waterfallGuideCue(normal,forward) {
 }
 
 export function selectWaterfallTarget(gates,flight,previousIndex=null) {
- const forward=forwardOf(flight),candidates=[];
+ const forward=forwardOf(flight);
+ let nearestIndex=-1,nearestGate=null,nearestCenter=null,nearestNormal=null,nearestDistance=0,nearestScore=0;
+ let previousGate=null,previousCenter=null,previousNormal=null,previousDistance=0,previousScore=0;
  for(let index=0;index<gates.length;index++) {
   const gate=gates[index],ring=gate.ring;
   if(!ring||gate.caught||gate.passed)continue;
@@ -27,11 +29,19 @@ export function selectWaterfallTarget(gates,flight,previousIndex=null) {
   // At a bend the nearest physical opening remains the target. Opposite-facing
   // course sections receive a penalty so a nearby return leg cannot steal it.
   const score=distance+(alignment<-.25?180:0);
-  candidates.push({gate,index,center,normal,distance,score,cue:waterfallGuideCue(normal,forward)});
+  // The old implementation sorted every candidate, then searched the sorted
+  // array for the previous target. These scalar fields preserve that exact
+  // score/index order and hysteresis without allocating a candidate per ring.
+  if(nearestIndex<0||score<nearestScore||(score===nearestScore&&index<nearestIndex)) {
+   nearestIndex=index;nearestGate=gate;nearestCenter=center;nearestNormal=normal;nearestDistance=distance;nearestScore=score;
+  }
+  if(index===previousIndex) {
+   previousGate=gate;previousCenter=center;previousNormal=normal;previousDistance=distance;previousScore=score;
+  }
  }
- if(!candidates.length)return null;
- candidates.sort((a,b)=>a.score-b.score||a.index-b.index);
- const nearest=candidates[0],previous=candidates.find(c=>c.index===previousIndex);
+ if(nearestIndex<0)return null;
+ const nearest={gate:nearestGate,index:nearestIndex,center:nearestCenter,normal:nearestNormal,distance:nearestDistance,score:nearestScore,cue:waterfallGuideCue(nearestNormal,forward)};
+ const previous=previousGate&&{gate:previousGate,index:previousIndex,center:previousCenter,normal:previousNormal,distance:previousDistance,score:previousScore,cue:waterfallGuideCue(previousNormal,forward)};
  // Small hysteresis prevents flicker between neighbouring openings while the
  // plane test above guarantees a missed ring cannot remain the target behind us.
  return previous&&previous.score<nearest.score+8?previous:nearest;

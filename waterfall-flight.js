@@ -128,7 +128,7 @@ export function stepWaterfallFlight(f, left, right, dt) {
   f.vx = (f.x - f.previousPosition.x) / dt;
   f.vy = (f.alt - f.previousPosition.y) / dt;
   f.vz = (f.z - f.previousPosition.z) / dt;
-  const angles = new Euler().setFromQuaternion(f.orientation, 'YXZ');
+  const angles = _euler.setFromQuaternion(f.orientation, 'YXZ');
   f.pitch = angles.x;
   f.yaw = angles.y;
   return f;

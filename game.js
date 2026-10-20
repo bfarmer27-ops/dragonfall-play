@@ -9,8 +9,9 @@ import * as THREE from 'three';
 import {TIER, setTier, readTierSetting} from './quality.js';
 import {createRenderSystem} from './render.js';
 import {createSky} from './sky.js';
-import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=9';
-import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=3';
+import {createWaterfallEnvironment,createWaterfallSky} from './waterfall-environment.js?v=10';
+import {prepareWaterfallScene} from './waterfall-prepare.js';
+import {createWaterfallGuide,selectWaterfallTarget} from './waterfall-guide.js?v=4';
 import {createTerrain, terrainHeight, createArchGeometry, createBoulderGeometry, createRockMaterial, worldSlope} from './terrain.js';
 import {createWater} from './water.js';
 import {createDressing} from './dressing.js';
@@ -30,7 +31,7 @@ import {createAudio} from './audio.js';
 import {createSpeech, readFireWord, saveFireWord, STICKY_STATUSES} from './speech.js';
 import {createNoiseFire} from './noise-fire.js?v=1';
 import {routeAt, FALL_START, FALL_END, VERTICAL_START, VERTICAL_END, ROUTE_LENGTH, createRings as createWaterfallRings, createWaterfallObstacles, getSpeedMultiplier as getWaterfallSpeed, setSpeedMultiplier as setWaterfallSpeed} from './waterfall-core.js';
-import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=10';
+import {initializeWaterfallFlight,stepWaterfallFlight,waterfallForward,waterfallCameraPose,crossesWaterfallRing,waterfallBoostStrength,applyOrbBoost} from './waterfall-flight.js?v=11';
 // Emerald Falls hazard names for the HUD: a graze costs a shield, a fireball shatters (lava cannot be shattered).
 const HAZARD_NAMES={spire:'SPIRE',totem:'TOTEM',stalactite:'STALACTITE',crystal:'CRYSTAL',geyser:'LAVA GEYSER',root:'ROOT'};
 const HAZARD_SHATTER={spire:'SPIRE SHATTERED',totem:'TOTEM SHATTERED',stalactite:'STALACTITE SHATTERED',crystal:'CRYSTAL SHATTERED',root:'ROOT BURNED'};
@@ -123,14 +124,6 @@ if (WATERFALL_MAP) {
  if (tier === 'phone') renderer.shadowMap.enabled = false;
  terrain.river.visible=false;
  waterfallEnvironment=createWaterfallEnvironment({group:waterfallWorld,renderer,scene,sky,onThunder:near=>audio.thunder(near)});
- // Build every drawing program (shader) while the start screen is up, instead of the first time each piece of
- // scenery comes into view mid-flight: each first sight cost a pause of up to 272 ms on a phone-speed test
- // (2026-10-07). The programs are built for the composer's drawing surface, the same one the game draws to.
- waterfallEnvironment.ready.catch(()=>{}).then(()=>{
-  const before=renderer.getRenderTarget();
-  try { renderer.setRenderTarget(rs.composer.readBuffer); return renderer.compileAsync(scene,camera); }
-  finally { renderer.setRenderTarget(before); }
- }).catch(e=>console.warn('shader warm-up skipped',e));
 }
 // Outside ?debug=1, do not stop to read each shader's error log the first time it is used: that read waits for the
 // graphics chip to finish building the shader, which turns a background build into a pause.
@@ -295,6 +288,15 @@ for (let i = 0; i < 3; i++) {
 }
 const waterfallGuide=WATERFALL_MAP ? createWaterfallGuide({container:$('game'),camera,gates}) : null;
 if (WATERFALL_MAP) for(const a of arches)a.mesh.visible=false;   // the canyon's arches belong to the canyon route
+// Wait for the final dragon, sky lighting and scenery before compiling. Images
+// loading is not the same as uploading them to the graphics chip: upload the
+// late-course textures here so their first appearance does not stall flight.
+const waterfallPreparation = WATERFALL_MAP ? prepareWaterfallScene({
+ renderer,scene,camera,target:rs.composer.readBuffer,
+ ready:[waterfallEnvironment.ready,model.loading,sky.ready],
+ textures:()=>waterfallEnvironment.textures,
+}) : Promise.resolve();
+waterfallPreparation.catch(e=>console.warn('waterfall preparation failed',e));
 // ---------------------------------------------------------------------------------------------
 let controlMode = WATERFALL_MAP ? 'thumbs' : readControlMode(), invertVertical = readInvertSetting(controlMode);
 const tilt = createTilt();
@@ -419,7 +421,7 @@ function saveBest() {
 async function start() {
  if (WATERFALL_MAP) {
   $('start').disabled=true;
-  try {await waterfallEnvironment.ready;} catch(e) {$('start').disabled=false;$('error').hidden=false;$('error').textContent='Scenery could not load. Reload this page to download the scenery again.';return false;}
+  try {await waterfallPreparation;} catch(e) {$('start').disabled=false;$('error').hidden=false;$('error').textContent='Scenery could not load. Reload this page to download the scenery again.';return false;}
   $('start').disabled=false;
   waterfallGuide.reset();
  }

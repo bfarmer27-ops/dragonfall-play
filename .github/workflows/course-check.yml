@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Course tests
-        run: node tests/waterfall-course.test.mjs
+      - name: Rendering and course regression tests
+        run: node --test tests/*.test.mjs
       - name: Course check (real flight physics)
         run: node tests/course-check.mjs
