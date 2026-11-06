@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#081411" />
+    <meta name="description" content="Dragonfall — fly the canyon beneath the Emerald Skies." />
+    <title>Dragonfall — Emerald Skies</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="./style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "../vendor/three.module.js",
+          "three/addons/": "../vendor/addons/"
+        }
+      }
+    </script>
+    <script type="module" src="./access.js"></script>
+  </head>
+  <body data-mode="intro">
+    <main class="game-shell">
+      <div class="scene" aria-label="Dragonfall flight view">
+        <canvas id="view" aria-label="Three-dimensional canyon flight scene"></canvas>
+        <div class="scene-vignette" aria-hidden="true"></div>
+
+        <section class="hud" aria-label="Flight information">
+          <div class="hud-brand"><span class="brand-mark" aria-hidden="true">✦</span><span>DRAGONFALL</span></div>
+          <div class="hud-stats">
+            <div class="stat"><span class="stat-label">DISTANCE</span><strong id="distance">0 <small>m</small></strong></div>
+            <div class="stat"><span class="stat-label">RINGS</span><strong id="rings">0</strong></div>
+            <div class="stat"><span class="stat-label">BEST</span><strong id="best">0 <small>m</small></strong></div>
+          </div>
+          <div class="hud-right">
+            <div class="speed-stat"><span class="stat-label">SPEED</span><strong id="speed">0 <small>km/h</small></strong></div>
+            <div class="shield-stat" id="health" aria-label="Dragon shields">
+              <span class="stat-label">SHIELDS</span>
+              <span class="shield-pips" aria-hidden="true"><i></i><i></i><i></i></span>
+            </div>
+          </div>
+          <div class="flight-actions" aria-label="Flight actions">
+            <button class="icon-button" id="sound" type="button" aria-label="Toggle sound" title="Toggle sound"><span aria-hidden="true">♫</span></button>
+            <button class="icon-button" id="restart" type="button" aria-label="Restart flight" title="Restart flight"><span aria-hidden="true">↻</span></button>
+            <button class="icon-button" id="pause" type="button" aria-label="Pause flight" title="Pause flight"><span aria-hidden="true">Ⅱ</span></button>
+          </div>
+        </section>
+
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+        <section class="welcome overlay-panel" id="welcome" aria-labelledby="game-title">
+          <div class="welcome-copy">
+            <p class="eyebrow"><span></span> A FLIGHT THROUGH THE WILD</p>
+            <h1 id="game-title">DRAGONFALL</h1>
+            <p class="subtitle">EMERALD SKIES</p>
+            <p class="intro-copy">The canyon is calling.<br />Find your line. Follow the light.</p>
+            <div class="menu-controls" aria-label="Choose flight controls">
+              <span class="control-label">FLIGHT CONTROLS</span>
+              <div class="segmented" role="group" aria-label="Flight control mode">
+                <button type="button" class="mode-choice is-selected" data-control-mode="one" aria-pressed="true">
+                  <span class="mode-icon one-icon" aria-hidden="true"><i></i></span>
+                  <span><b>ONE THUMB</b><small>Move together</small></span>
+                </button>
+                <button type="button" class="mode-choice" data-control-mode="two" aria-pressed="false">
+                  <span class="mode-icon two-icon" aria-hidden="true"><i></i><i></i></span>
+                  <span><b>TWO THUMBS</b><small>Independent wings</small></span>
+                </button>
+              </div>
+              <p class="keyboard-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys <span>·</span> steer</p>
+            </div>
+            <button id="start" class="primary-button" type="button" disabled>
+              <span class="start-label">FLY THE CANYON</span><span class="button-arrow" aria-hidden="true">↗</span>
+            </button>
+            <p class="loading" id="loading" role="status" aria-live="polite"><span class="loader-dot"></span> Preparing the flight…</p>
+            <button class="text-button" id="settings-open" type="button">Flight settings <span aria-hidden="true">↗</span></button>
+          </div>
+          <div class="welcome-footer"><span>AN ENDLESS FLIGHT</span><span class="footer-line"></span><span>01 — EMERALD CANYON</span></div>
+        </section>
+
+        <section class="modal-screen" id="pause-screen" aria-labelledby="pause-title" hidden>
+          <div class="modal-card">
+            <p class="eyebrow"><span></span> TAKE A BREATH</p>
+            <h2 id="pause-title">FLIGHT PAUSED</h2>
+            <p>Your dragon is holding position.</p>
+            <button id="resume" class="primary-button" type="button"><span>RESUME FLIGHT</span><span class="button-arrow" aria-hidden="true">↗</span></button>
+            <button class="text-button" data-open-settings type="button">Flight settings</button>
+          </div>
+        </section>
+
+        <section class="modal-screen" id="game-over" aria-labelledby="over-title" hidden>
+          <div class="modal-card result-card">
+            <p class="eyebrow"><span></span> THE WIND SETTLES</p>
+            <h2 id="over-title">FLIGHT COMPLETE</h2>
+            <p>Your path through the canyon.</p>
+            <div class="result-stats">
+              <div><span>DISTANCE</span><strong id="final-distance">0 <small>m</small></strong></div>
+              <div><span>RINGS FOUND</span><strong id="final-rings">0</strong></div>
+            </div>
+            <button id="again" class="primary-button" type="button"><span>FLY AGAIN</span><span class="button-arrow" aria-hidden="true">↗</span></button>
+          </div>
+        </section>
+
+        <div class="touch-controls" id="thumb-controls" aria-label="Touch flight controls" hidden>
+          <div class="touch-pad single-pad" id="single-pad" aria-label="Steer with one thumb"><span class="pad-orbit"></span><span class="pad-knob"></span><span class="pad-caption">STEER</span></div>
+          <div class="touch-pad wing-pad left-pad" id="left-pad" aria-label="Left wing control"><span class="pad-orbit"></span><span class="pad-knob"></span><span class="pad-caption">LEFT WING</span></div>
+          <div class="touch-pad wing-pad right-pad" id="right-pad" aria-label="Right wing control"><span class="pad-orbit"></span><span class="pad-knob"></span><span class="pad-caption">RIGHT WING</span></div>
+        </div>
+      </div>
+
+      <dialog class="settings-dialog" id="settings" aria-labelledby="settings-title">
+        <form method="dialog" class="settings-card">
+          <div class="dialog-heading"><div><p class="eyebrow"><span></span> MAKE IT YOURS</p><h2 id="settings-title">FLIGHT SETTINGS</h2></div><button class="icon-button close-button" value="close" aria-label="Close settings">×</button></div>
+          <label class="setting-row" for="control-mode"><span><b>Control style</b><small>Choose how your thumbs steer.</small></span><select id="control-mode"><option value="one">One thumb</option><option value="two">Two thumbs</option></select></label>
+          <label class="setting-row" for="quality"><span><b>Visual quality</b><small>Auto adjusts to keep flight smooth.</small></span><select id="quality"><option value="auto">Auto</option><option value="high">High</option><option value="phone">Phone</option></select></label>
+          <label class="setting-row check-row" for="invert"><span><b>Invert pitch</b><small>Reverse up and down steering.</small></span><input id="invert" type="checkbox" /></label>
+          <label class="setting-row range-row" for="sensitivity"><span><b>Steering sensitivity</b><small>Change how quickly the dragon responds.</small></span><span class="range-value"><input id="sensitivity" type="range" min="0.5" max="2" step="0.1" value="1" /><output for="sensitivity">1.0×</output></span></label>
+          <details class="credits" id="credits">
+            <summary class="control-label">CREDITS &amp; LICENSES</summary>
+            <a href="../assets/models/NORBERTO-CREDITS.txt" target="_blank" rel="noopener">Model credits <span aria-hidden="true">↗</span></a>
+            <a href="../assets/LICENSES.txt" target="_blank" rel="noopener">Third-party licenses <span aria-hidden="true">↗</span></a>
+          </details>
+          <button class="primary-button settings-done" value="close" type="submit"><span>KEEP SETTINGS</span><span class="button-arrow" aria-hidden="true">↗</span></button>
+        </form>
+      </dialog>
+    </main>
+  </body>
+</html>
