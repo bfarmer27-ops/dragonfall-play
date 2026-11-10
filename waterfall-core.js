@@ -1,13 +1,13 @@
 // Stationary course geometry only. The live two-thumb player never follows routeAt.
 // Direction comes from waterfall-flight.js and the player's controls.
 export const FLIGHT_SPEED = 52; // Retired one-thumb helper only.
-export const DEFAULT_SPEED_MULTIPLIER = 12;
+export const DEFAULT_SPEED_MULTIPLIER = 7;
 export const SPEED_MULTIPLIER_MIN = .75;
-export const SPEED_MULTIPLIER_MAX = 15;
+export const SPEED_MULTIPLIER_MAX = 10;
 // Keep the smooth course at high speeds rather than spacing its bend rings apart.
 export const RING_SPACING_SPEED_MAX = SPEED_MULTIPLIER_MAX;
 // Reset the former capped preference once; later choices on this key persist.
-export const SPEED_STORAGE_KEY='dragonfall-waterfall-speed-v3';
+export const SPEED_STORAGE_KEY='dragonfall-waterfall-speed-v4';
 // The Hollow (2026-10-07): a 7 km cave run through the mountain, flown BEFORE the Sky Isles. Then the
 // Sky Isles: a prelude of floating islands above a cloud sea before the gorge begins (2026-10-06).
 export const HOLLOW_LENGTH = 7000;

@@ -211,7 +211,7 @@ if (import.meta.main) {
  // waterfall drop is a 360 m curve and the dive turn radius is 240 m at full stick (unchanged), so the drop needs
  // at least 67% stick by itself (at 70% and 15x the dragon brushes the waterfall's water sheet). Golden orbs too:
  // every speed, at 100% stick.
- const SPEEDS = [6, 8.6, 12, 15];
+ const SPEEDS = [6, 7, 8.6, 10];
  const RUNS = [{input: .6, withBonus: false, limit: FALL_START}, {input: .75, withBonus: false}, {input: 1, withBonus: false}, {input: 1, withBonus: true}];
  const started = Date.now();
  const rows = [];

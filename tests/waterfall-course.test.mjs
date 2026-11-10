@@ -57,7 +57,7 @@ const turn = rings.find(r => close(r.distance, WATERFALL_TURN_RING_DISTANCE));
 const exit = rings.find(r => close(r.distance, WATERFALL_EXIT_RING_DISTANCE));
 const descentFirst = rings.find(r => close(r.distance, WATERFALL_DESCENT_RING_DISTANCE));
 const descentFollow = rings.find(r => close(r.distance, WATERFALL_DESCENT_FOLLOW_RING_DISTANCE));
-assert.equal(DEFAULT_SPEED_MULTIPLIER, 12, 'the default waterfall speed is 12x');
+assert.equal(DEFAULT_SPEED_MULTIPLIER, 7, 'the default waterfall speed is 7x');
 assert.equal(cues.length, 11, 'three Sky Isles cues plus the eight planned waterfall cues');
 assert.equal(bonuses.length, WATERFALL_BONUS_ORBS.length, 'every golden bonus orb outside the Hollow is placed');
 assert.equal(hollowRings.length, HOLLOW_RING_CUES.length + HOLLOW_BONUS_ORBS.length, 'every Hollow cue and golden orb is placed');
@@ -154,22 +154,22 @@ for (const river of HOLLOW_WIND_RIVERS) {
  }
 }
 
-setSpeedMultiplier(15);
-assert.equal(getSpeedMultiplier(), 15, 'the waterfall speed setting reaches 15x');
-assert.equal(createRings(15).length, rings.length, '15x keeps the same orbs');
+setSpeedMultiplier(10);
+assert.equal(getSpeedMultiplier(), 10, 'the waterfall speed setting reaches 10x');
+assert.equal(createRings(10).length, rings.length, '10x keeps the same orbs');
 
 setSpeedMultiplier(7);
 const flight = {};
 initializeWaterfallFlight(flight);
 const oldFlightSpeed = flight.speed;
-setSpeedMultiplier(12);
+setSpeedMultiplier(10);
 stepWaterfallFlight(flight, 0, 0, 1 / 120);
-assert.equal(flight.speedMultiplier, 12, 'the current flight reads a changed speed setting');
+assert.equal(flight.speedMultiplier, 10, 'the current flight reads a changed speed setting');
 assert.ok(flight.speed > oldFlightSpeed, 'the current flight speed changes without restarting');
 assert.equal(flight.streak, 0, 'a fresh flight has no streak');
 
 // Orb boost: the burst raises the speed by the streak's gain, then fades back to the chosen speed.
-const cruise = WATERFALL_CRUISE_SPEED * 12;
+const cruise = WATERFALL_CRUISE_SPEED * 10;
 stepWaterfallFlight(flight, 0, 0, 1 / 120);
 assert.ok(close(flight.speed, cruise, 1e-9), 'without a boost the flight runs at the chosen speed');
 applyOrbBoost(flight, 1);
@@ -197,7 +197,7 @@ assert.ok(caveFlight.x <= 5 + 1e-9, 'the cave limit holds the dragon inside (' +
 // climb and dive keep their old radius (360 m / 1.5).
 assert.equal(WATERFALL_TURN_RADIUS, 240, 'left/right turn radius is 240 m');
 assert.equal(WATERFALL_PITCH_RADIUS, ARC_RADIUS / 1.5, 'climb/dive radius is unchanged');
-for (const speed of [6, 15]) {
+for (const speed of [6, 10]) {
  setSpeedMultiplier(speed);
  const turner = initializeWaterfallFlight({});
  for (let i = 0; i < 120; i++) stepWaterfallFlight(turner, -1, 1, 1 / 120);
@@ -212,7 +212,7 @@ for (const speed of [6, 15]) {
 {
  const camUp = f => waterfallCameraPose(f).up;
  for (const [label, segments] of [['small bank pointing down', [[150, -1, -1], [240, -.15, .15]]], ['pushing past vertical', [[200, -1, -1], [120, 0, 0]]]]) {
-  setSpeedMultiplier(12);
+  setSpeedMultiplier(7);
   const diver = initializeWaterfallFlight({}); diver.alt = 5000;
   let prev = camUp(diver), worst = 0;
   for (const [steps, l, r] of segments) for (let i = 0; i < steps; i++) {
@@ -248,4 +248,4 @@ assert.equal(normalizeThumbInput(700, 835, 100, 844), -1, 'bottom edge is maximu
 assert.equal(normalizeThumbInput(700, 8, 100, 844), 1, 'top edge is maximum up');
 assert.ok(Math.abs(normalizeThumbInput(700, 650, 100, 844) - .4897959183673469) < 1e-6, 'normal thumb travel keeps its scaled value');
 
-console.log(`waterfall-course: ${hollowRings.length} Hollow orbs + ${cues.length} orb cues + ${bonuses.length} golden orbs; ${hollowHazards.length} Hollow hazards + ${spires.length} spires + ${totems.length} totems; ${HOLLOW_WIND_RIVERS.length} wind rivers; boost ${boostGainForStreak(1)}..${boostGainForStreak(50)}; speed 15x; cave limit; edge thumb saturation passed`);
+console.log(`waterfall-course: ${hollowRings.length} Hollow orbs + ${cues.length} orb cues + ${bonuses.length} golden orbs; ${hollowHazards.length} Hollow hazards + ${spires.length} spires + ${totems.length} totems; ${HOLLOW_WIND_RIVERS.length} wind rivers; boost ${boostGainForStreak(1)}..${boostGainForStreak(50)}; speed 10x; cave limit; edge thumb saturation passed`);
